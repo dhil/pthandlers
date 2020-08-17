@@ -1,8 +1,10 @@
 #include<stdio.h>
 #include<stdlib.h>
+#include<limits.h>
 #include<pthread.h>
 #include "pthreadhandlers.h"
 
+const int EMPTY  = INT_MIN;
 const int RETURN = -1;
 
 typedef struct op_t {
@@ -11,10 +13,14 @@ typedef struct op_t {
   resumption_t *resumption;
 } op_t;
 
-typedef struct handler_t {
+struct handler_t {
   ret_handler_t ret;
   op_handler_t op;
-} handler_t;
+  size_t num_opcodes;
+  int* opcodes;
+};
+
+typedef struct handler_t* handler_t;
 
 typedef struct stack_repr_t {
   // Communication.
@@ -22,10 +28,13 @@ typedef struct stack_repr_t {
   pthread_cond_t *cond;
   void *value;
 
-  // Handler pointer.
-  handler_t *handler;
+  // Operation package pointer.
+  op_t *op;
 
-  // Parent pointer.
+  // Handler pointer.
+  handler_t handler;
+
+  // Parent stack pointer.
   struct stack_repr_t *parent;
 } stack_repr_t;
 
@@ -72,9 +81,12 @@ void* h0_op(const op_t *op) {
 
 int main(void) {
   init_handler_runtime();
-  handler_t h0 = {h0_ret, h0_op};
-  handle(simple_loop, &h0);
+  handler_t h0;
+  int opcodes[] = {1};
+  init_handler(&h0, h0_ret, h0_op, 1, opcodes);
+  handle(simple_loop, h0);
   fprintf(stdout, "\n");
+  destroy_handler(&h0);
   destroy_handler_runtime();
   return 0;
 }
@@ -86,23 +98,19 @@ void* init_stack(void *arg) {
   // Setup local stack structure.
   sp = data->repr;
 
-  // Rendezvous with the parent stack.
-  /* pthread_mutex_lock(sp->mut); */
-  /* pthread_cond_wait(sp->cond, sp->mut); */
-  /* pthread_mutex_unlock(sp->mut); */
-
   // Run computation
-  //printf("Running comp.\n");
   void *result = data->comp();
 
-  // Signal return.
+  // Initiate return protocol.
+  // Acquire parent stack lock.
   pthread_mutex_lock(sp->parent->mut);
-  op_t *ret_op = (op_t *)malloc(sizeof(op_t));
-  ret_op->tag = RETURN;
-  ret_op->value = result;
-  ret_op->resumption = NULL;
-  sp->parent->value = ret_op;
 
+  // Publish return package.
+  sp->parent->op->tag = RETURN;
+  sp->parent->op->value = result;
+  sp->parent->op->resumption = NULL;
+
+  // Notify parent stack and release its lock.
   pthread_cond_signal(sp->parent->cond);
   pthread_mutex_unlock(sp->parent->mut);
 
@@ -115,8 +123,21 @@ void* await(void) {
   /* void *result = NULL; */
   pthread_cond_wait(sp->cond, sp->mut);
   //printf("Received event\n");
-  if (((op_t*)sp->value)->tag == RETURN) return sp->handler->ret(((op_t*)sp->value)->value);
-  else return sp->handler->op((op_t*)sp->value);
+  if (sp->op->tag == RETURN) return sp->handler->ret(sp->op->value);
+  else return sp->handler->op(sp->op);
+}
+
+op_t* alloc_op(void) {
+  op_t *op = (op_t*)malloc(sizeof(op_t));
+  op->tag = EMPTY;
+  op->value = NULL;
+  op->resumption = NULL;
+  return op;
+}
+
+int destroy_op(op_t *op) {
+  free(op);
+  return 0;
 }
 
 stack_repr_t* alloc_stack_repr(void) {
@@ -126,6 +147,7 @@ stack_repr_t* alloc_stack_repr(void) {
   stack_repr->cond = (pthread_cond_t*)malloc(sizeof(pthread_cond_t));
   pthread_cond_init(stack_repr->cond, NULL); // TODO check return value.
   stack_repr->value = NULL;
+  stack_repr->op = alloc_op();
   stack_repr->handler = NULL;
   stack_repr->parent = NULL;
   return stack_repr;
@@ -134,12 +156,33 @@ stack_repr_t* alloc_stack_repr(void) {
 int destroy_stack_repr(stack_repr_t *stack_repr) {
   pthread_mutex_destroy(stack_repr->mut);
   pthread_cond_destroy(stack_repr->cond);
+  destroy_op(stack_repr->op);
   free(stack_repr->mut);
   free(stack_repr->cond);
   free(stack_repr);
   stack_repr = NULL;
   return 0;
 }
+
+/* int handles(const handler_t handler, const op_t *op) { */
+/*   // Conservatively return true if the handler's operation interface */
+/*   // has not been published. */
+/*   if (handler->num_opcodes <= 0) return 1; */
+
+/*   for (int i = 0; i < handler->num_opcodes; i++) { */
+/*     if (handler->opcodes[i] == op->tag) return 1; */
+/*   } */
+/*   return 0; */
+/* } */
+
+/* int dispatch(stack_repr_t *sp, const op_t *op) { */
+/*   if (sp == NULL || sp->handler == NULL) return -1; // TODO FIXME. */
+/*   if (handles(sp->handler, op)) { */
+    
+/*   } else { */
+/*     return dispatch(sp->parent, op); */
+/*   } */
+/* } */
 
 /* Implementation of public interface. */
 int init_handler_runtime(void) {
@@ -153,7 +196,23 @@ int destroy_handler_runtime(void) {
   return 0;
 }
 
-void* handle(computation_t comp, handler_t *handler) {
+int init_handler(handler_t *handler, ret_handler_t ret_handler, op_handler_t op_handler, size_t num_opcodes, int* opcodes) {
+  handler_t new_handler = (handler_t)malloc(sizeof(handler_t));
+  new_handler->ret = ret_handler;
+  new_handler->op  = op_handler;
+  new_handler->num_opcodes = num_opcodes;
+  new_handler->opcodes = opcodes;
+  *handler = new_handler;
+  return 0;
+}
+
+int destroy_handler(handler_t *handler) {
+  free(*handler);
+  handler = NULL;
+  return 0;
+}
+
+void* handle(computation_t comp, handler_t handler) {
   // Prepare a new child stack.
   pthread_t th;
   pthread_attr_t attr;
@@ -169,9 +228,7 @@ void* handle(computation_t comp, handler_t *handler) {
   child_stack_repr->parent = sp;
 
   // Prepare stack initialisation payload.
-  stack_data_t *stack_data = (stack_data_t*)malloc(sizeof(stack_data_t));
-  stack_data->comp = comp;
-  stack_data->repr = child_stack_repr;
+  stack_data_t stack_data = {comp, child_stack_repr};
 
   // Acquire current stack lock.
   pthread_mutex_lock(sp->mut);
@@ -180,13 +237,10 @@ void* handle(computation_t comp, handler_t *handler) {
   sp->handler = handler;
 
   // Initialise the child stack.
-  if (pthread_create(&th, &attr, init_stack, stack_data) != 0) {
+  if (pthread_create(&th, &attr, init_stack, &stack_data) != 0) {
     fprintf(stderr, "error: new stack creation failed.\n");
     exit(-1);
   }
-
-  // Signal child stack.
-  /* pthread_cond_signal(child_stack_repr->cond); */
 
   // Enter handling loop.
   void *result = await();
@@ -196,11 +250,9 @@ void* handle(computation_t comp, handler_t *handler) {
   pthread_attr_destroy(&attr);
 
   destroy_stack_repr(child_stack_repr);
-  free(stack_data);
 
   // Uninstall current handler.
   sp->handler = NULL;
-  free(sp->value); // return operation package.
 
   // Release current stack lock.
   pthread_mutex_unlock(sp->mut);
@@ -209,15 +261,15 @@ void* handle(computation_t comp, handler_t *handler) {
 
 void* perform(int tag, const void *payload) {
   //printf("Performing event %d\n", tag);
-  // Prepare operation package.
-  op_t op = {tag, payload, sp};
 
   // Acquire current and parent stack lock.
   pthread_mutex_lock(sp->mut);
   pthread_mutex_lock(sp->parent->mut);
 
   // Publish operation package.
-  sp->parent->value = &op;
+  sp->parent->op->tag = tag;
+  sp->parent->op->value = payload;
+  sp->parent->op->resumption = sp;
 
   // Release parent stack lock.
   pthread_mutex_unlock(sp->parent->mut);
