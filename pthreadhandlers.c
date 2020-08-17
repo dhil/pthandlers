@@ -44,6 +44,8 @@ typedef struct {
   stack_repr_t *repr;
 } stack_data_t;
 
+void *forward(const op_t *op);
+
 // Thread-local "stack" pointer.
 static _Thread_local stack_repr_t *sp = NULL;
 
@@ -73,19 +75,37 @@ void* h0_op(const op_t *op) {
     return resume(op->resumption, NULL);
     break;
   default:
-    fprintf(stderr, "error: forwarding not yet implemented.\n");
-    exit(-1);
+    return forward(op);
+    /* fprintf(stderr, "error: forwarding not yet implemented.\n"); */
+    /* exit(-1); */
     break;
   }
+}
+
+void* h1_ret(const void *value) {
+  return NULL;
+}
+
+void* h1_op(const op_t *op) {
+  return forward(op);
+}
+
+void* wrapped_simple_loop(void) {
+  handler_t h1;
+  int opcodes[] = {1};
+  init_handler(&h1, h1_ret, h1_op, 0, opcodes);
+  void *result = handle(simple_loop, h1);
+  fprintf(stdout, "\n");
+  destroy_handler(&h1);
+  return result;
 }
 
 int main(void) {
   init_handler_runtime();
   handler_t h0;
   int opcodes[] = {1};
-  init_handler(&h0, h0_ret, h0_op, 1, opcodes);
-  handle(simple_loop, h0);
-  fprintf(stdout, "\n");
+  init_handler(&h0, h0_ret, h0_op, 0, opcodes);
+  handle(wrapped_simple_loop, h0);
   destroy_handler(&h0);
   destroy_handler_runtime();
   return 0;
@@ -183,6 +203,32 @@ int destroy_stack_repr(stack_repr_t *stack_repr) {
 /*     return dispatch(sp->parent, op); */
 /*   } */
 /* } */
+
+void *forward(const op_t *op) {
+  // Acquire current and parent stack lock.  Lock for current stack
+  // should already be acquired prior to invoking forward.
+  /* pthread_mutex_lock(sp->mut); */
+  pthread_mutex_lock(sp->parent->mut);
+
+  // Publish operation package.
+  sp->parent->op->tag = op->tag;
+  sp->parent->op->value = op->value;
+  sp->parent->op->resumption = sp;
+
+  // Release parent stack lock.
+  pthread_mutex_unlock(sp->parent->mut);
+
+  // Signal parent stack.
+  pthread_cond_signal(sp->parent->cond);
+
+  // Await continuation signal.
+  pthread_cond_wait(sp->cond, sp->mut);
+  /* void *result = sp->value; */
+  /* pthread_mutex_unlock(sp->mut); */
+
+  /* return result; */
+  return resume(op->resumption, sp->value);
+}
 
 /* Implementation of public interface. */
 int init_handler_runtime(void) {
