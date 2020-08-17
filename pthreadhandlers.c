@@ -5,17 +5,13 @@
 
 const int RETURN = -1;
 
-typedef struct {
+typedef struct op_t {
   int tag;
   const void *value;
   resumption_t *resumption;
 } op_t;
 
-typedef void *(*computation_t)(void);
-typedef void *(*op_handler_t)(const op_t*);
-typedef void *(*ret_handler_t)(const void*);
-
-typedef struct {
+typedef struct handler_t {
   ret_handler_t ret;
   op_handler_t op;
 } handler_t;
@@ -27,7 +23,7 @@ typedef struct stack_repr_t {
   void *value;
 
   // Handler pointer.
-  const handler_t *handler;
+  handler_t *handler;
 
   // Parent pointer.
   struct stack_repr_t *parent;
@@ -38,18 +34,6 @@ typedef struct {
   computation_t comp;
   stack_repr_t *repr;
 } stack_data_t;
-
-/* Public interface */
-// Install a handler.
-void* handle(computation_t comp, const handler_t *handler);
-// Perform an operation.
-void* perform(int op, const void *payload);
-// Invoke a resumption.
-void* resume(resumption_t *r, void *arg);
-// Initialise the toplevel.
-int init_handler_runtime(void);
-// Finalise the toplevel.
-int destroy_handler_runtime(void);
 
 // Thread-local "stack" pointer.
 static _Thread_local stack_repr_t *sp = NULL;
@@ -109,7 +93,6 @@ void* init_stack(void *arg) {
 
   // Run computation
   //printf("Running comp.\n");
-  //printf("is null: %s\n", data->comp == NULL ? "true" : "false");
   void *result = data->comp();
 
   // Signal return.
@@ -132,8 +115,7 @@ void* await(void) {
   /* void *result = NULL; */
   pthread_cond_wait(sp->cond, sp->mut);
   //printf("Received event\n");
-  /* op_t* op = (op_t*)sp->value; */
-  if (((op_t*)sp->value)->tag == RETURN) return sp->handler->ret(NULL); // TODO FIXME.
+  if (((op_t*)sp->value)->tag == RETURN) return sp->handler->ret(((op_t*)sp->value)->value);
   else return sp->handler->op((op_t*)sp->value);
 }
 
@@ -171,7 +153,7 @@ int destroy_handler_runtime(void) {
   return 0;
 }
 
-void* handle(computation_t comp, const handler_t *handler) {
+void* handle(computation_t comp, handler_t *handler) {
   // Prepare a new child stack.
   pthread_t th;
   pthread_attr_t attr;
@@ -207,7 +189,7 @@ void* handle(computation_t comp, const handler_t *handler) {
   /* pthread_cond_signal(child_stack_repr->cond); */
 
   // Enter handling loop.
-  await();
+  void *result = await();
 
   // Finalise the child stack
   pthread_join(th, NULL);
@@ -222,7 +204,7 @@ void* handle(computation_t comp, const handler_t *handler) {
 
   // Release current stack lock.
   pthread_mutex_unlock(sp->mut);
-  return NULL;
+  return result;
 }
 
 void* perform(int tag, const void *payload) {
@@ -258,7 +240,7 @@ void* resume(resumption_t *r, void *arg) {
   pthread_mutex_lock(target->mut);
 
   // Publish the argument.
-  target->value = arg; // TODO FIXME.
+  target->value = arg;
 
   // Signal readiness.
   pthread_cond_signal(target->cond);
