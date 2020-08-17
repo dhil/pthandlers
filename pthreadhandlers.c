@@ -22,8 +22,11 @@ struct handler_t {
 
 typedef struct handler_t* handler_t;
 
+typedef enum { NORMAL, ABORT } stack_status_t;
+
 typedef struct stack_repr_t {
   // Communication.
+  stack_status_t status;
   pthread_mutex_t *mut;
   pthread_cond_t *cond;
   void *value;
@@ -170,6 +173,7 @@ stack_repr_t* alloc_stack_repr(void) {
   stack_repr->op = alloc_op();
   stack_repr->handler = NULL;
   stack_repr->parent = NULL;
+  stack_repr->status = NORMAL;
   return stack_repr;
 }
 
@@ -228,6 +232,11 @@ void *forward(const op_t *op) {
 
   /* return result; */
   return resume(op->resumption, sp->value);
+}
+
+void abort_stack(void) {
+  fprintf(stderr, "error: abort stack not yet implemented.\n");
+  exit(-1);
 }
 
 /* Implementation of public interface. */
@@ -325,7 +334,9 @@ void* perform(int tag, const void *payload) {
 
   // Await continuation signal.
   pthread_cond_wait(sp->cond, sp->mut);
-  void *result = sp->value;
+  // Check for abortive status.
+  if (sp->status == ABORT) abort_stack();
+  void *result = sp->value; // TODO FIXME: copy pointer.
   pthread_mutex_unlock(sp->mut);
 
   return result;
@@ -341,6 +352,25 @@ void* resume(resumption_t *r, void *arg) {
   target->value = arg;
 
   // Signal readiness.
+  pthread_cond_signal(target->cond);
+
+  // Release target stack lock.
+  pthread_mutex_unlock(target->mut);
+
+  // Await next event.
+  return await();
+}
+
+void* abort_(resumption_t *r, exn_t *e) {
+  stack_repr_t *target = r;
+  // Acquire target stack lock.
+  pthread_mutex_lock(target->mut);
+
+  // Publish exception.
+  target->status = ABORT;
+  target->value = e;
+
+  // Signal target stack.
   pthread_cond_signal(target->cond);
 
   // Release target stack lock.

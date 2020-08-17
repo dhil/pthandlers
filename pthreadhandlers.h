@@ -6,7 +6,11 @@ typedef struct handler_t* handler_t;
 typedef void *(*computation_t)(void);
 typedef void *(*op_handler_t)(const op_t*);
 typedef void *(*ret_handler_t)(const void*);
-typedef int (*handle_predicate_t)(const op_t*);
+/* typedef int (*handle_predicate_t)(const op_t*); */
+
+typedef struct {
+  char *message;
+} exn_t;
 
 extern const int RETURN;
 
@@ -21,6 +25,8 @@ void* handle(computation_t comp, handler_t handler);
 void* perform(int op, const void *payload);
 // Invoke a resumption.
 void* resume(resumption_t *r, void *arg);
+// Abort a resumption.
+void* abort_(resumption_t *r, exn_t *e);
 
 // Initialise the runtime.
 int init_handler_runtime(void);
