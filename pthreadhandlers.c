@@ -4,23 +4,20 @@
 #include<pthread.h>
 #include "pthreadhandlers.h"
 
-const int EMPTY  = INT_MIN;
-const int RETURN = -1;
+static const int EMPTY  = INT_MIN;
+static const int RETURN = -1;
 
 typedef struct op_t {
   int tag;
-  const void *value;
+  void *value;
   resumption_t *resumption;
 } op_t;
 
 struct handler_t {
   ret_handler_t ret;
   op_handler_t op;
-  size_t num_opcodes;
-  int* opcodes;
+  void *param;
 };
-
-typedef struct handler_t* handler_t;
 
 typedef enum { NORMAL, ABORT } stack_status_t;
 
@@ -47,13 +44,8 @@ typedef struct {
   stack_repr_t *repr;
 } stack_data_t;
 
-void *forward(const op_t *op);
-
-// Thread-local "stack" pointer.
-static _Thread_local stack_repr_t *sp = NULL;
-
 /* Example */
-enum { DO = 1 };
+enum { DO = 1, GET, PUT };
 void* simple_loop(void) {
   printf("Loop start\n");
   int n = 1000000;
@@ -66,11 +58,11 @@ void* simple_loop(void) {
   return NULL;
 }
 
-void* h0_ret(const void *value) {
+void* h0_ret(void *value, void *param) {
   return NULL;
 }
 
-void* h0_op(const op_t *op) {
+void* h0_op(const op_t *op, void *param) {
   switch (op->tag) {
   case DO:
     fprintf(stdout, "be ");
@@ -85,37 +77,124 @@ void* h0_op(const op_t *op) {
   }
 }
 
-void* h1_ret(const void *value) {
+void* h1_ret(void *value, void *param) {
   return NULL;
 }
 
-void* h1_op(const op_t *op) {
+void* h1_op(const op_t *op, void *param) {
   return forward(op);
 }
 
 void* wrapped_simple_loop(void) {
   handler_t h1;
-  int opcodes[] = {1};
-  init_handler(&h1, h1_ret, h1_op, 0, opcodes);
+  init_handler(&h1, h1_ret, h1_op, NULL);
   void *result = handle(simple_loop, h1);
   fprintf(stdout, "\n");
   destroy_handler(&h1);
   return result;
 }
 
+void* countdown(void) {
+  int st = (int)perform(GET, NULL);
+  if (st == 0) return (void*)0;
+  else {
+    perform(PUT, (void *)(st - 1));
+    return countdown();
+  }
+}
+
+void* eval_state_ret(void *value, void *param) {
+  return (void*)value;
+}
+
+void* eval_state_op(const op_t *op, void *st) {
+  switch (op->tag) {
+  case GET:
+    return resume_with(op->resumption, st, st);
+    break;
+  case PUT:
+    return resume_with(op->resumption, NULL, (void*)op->value);
+    break;
+  default:
+    return forward(op);
+  }
+}
+
+typedef struct pair_t {
+  void *fst;
+  void *snd;
+} pair_t;
+
+pair_t* alloc_pair(void) {
+  return (pair_t*)malloc(sizeof(pair_t));
+}
+
+int destroy_pair(pair_t *pair) {
+  free(pair);
+  return 0;
+}
+
+pair_t *make_pair(void *fst, void *snd) {
+  pair_t *pair = alloc_pair();
+  pair->fst = fst;
+  pair->snd = snd;
+  return pair;
+}
+
+void *run_state_ret(void *value, void *param) {
+  pair_t *pair = make_pair((void*)value, param);
+  return pair;
+}
+
+void *run_state_op(const op_t *op, void *param) {
+  return eval_state_op(op, param);
+}
+
+int countdown_direct(const void* n) {
+  if ((int)n == 0) return 0;
+  else return countdown_direct((void*)(((int)n) - 1));
+}
+
+int countdown_loop(const void* n) {
+  int m = (int)n;
+  while(m != 0) m--;
+  return m;
+}
+
 int main(void) {
   init_handler_runtime();
-  handler_t h0;
-  int opcodes[] = {1};
-  init_handler(&h0, h0_ret, h0_op, 0, opcodes);
-  handle(wrapped_simple_loop, h0);
-  destroy_handler(&h0);
+  /* handler_t h0; */
+  /* init_handler(&h0, h0_ret, h0_op, NULL); */
+  /* handle(wrapped_simple_loop, h0); */
+  /* destroy_handler(&h0); */
+
+    int n = 1000000;
+
+  printf("Countdown direct: %d\n", countdown_direct((void*)n));
+  printf("Countdown loop: %d\n", countdown_loop((void*)n));
+
+  handler_t eval_state;
+  init_handler(&eval_state, eval_state_ret, eval_state_op, (void*)n);
+  int result = (int)handle(countdown, eval_state);
+  printf("Countdown effectful: %d\n", result);
+  destroy_handler(&eval_state);
+
+  handler_t run_state;
+  init_handler(&run_state, run_state_ret, run_state_op, (void*)n);
+  pair_t *p = (pair_t*)handle(countdown, run_state);
+  printf("Countdown with run_state: v = %d, st = %d\n", (int)(p->fst), (int)(p->snd));
+  destroy_pair(p);
+  destroy_handler(&run_state);
+
   destroy_handler_runtime();
   return 0;
 }
 
 /* Runtime implementation. */
-void* init_stack(void *arg) {
+// Thread-local "stack" pointer.
+static _Thread_local stack_repr_t *sp = NULL;
+
+static void* init_stack(void *arg) {
   stack_data_t *data = (stack_data_t*)arg;
 
   // Setup local stack structure.
@@ -140,17 +219,17 @@ void* init_stack(void *arg) {
   return NULL;
 }
 
-void* await(void) {
+static void* await(void) {
   //printf("Awaiting\n");
   // Await an event.
   /* void *result = NULL; */
   pthread_cond_wait(sp->cond, sp->mut);
   //printf("Received event\n");
-  if (sp->op->tag == RETURN) return sp->handler->ret(sp->op->value);
-  else return sp->handler->op(sp->op);
+  if (sp->op->tag == RETURN) return sp->handler->ret(sp->op->value, sp->handler->param);
+  else return sp->handler->op(sp->op, sp->handler->param);
 }
 
-op_t* alloc_op(void) {
+static op_t* alloc_op(void) {
   op_t *op = (op_t*)malloc(sizeof(op_t));
   op->tag = EMPTY;
   op->value = NULL;
@@ -158,12 +237,12 @@ op_t* alloc_op(void) {
   return op;
 }
 
-int destroy_op(op_t *op) {
+static int destroy_op(op_t *op) {
   free(op);
   return 0;
 }
 
-stack_repr_t* alloc_stack_repr(void) {
+static stack_repr_t* alloc_stack_repr(void) {
   stack_repr_t *stack_repr = (stack_repr_t*)malloc(sizeof(stack_repr_t));
   stack_repr->mut = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
   pthread_mutex_init(stack_repr->mut, NULL); // TODO check return value.
@@ -177,7 +256,7 @@ stack_repr_t* alloc_stack_repr(void) {
   return stack_repr;
 }
 
-int destroy_stack_repr(stack_repr_t *stack_repr) {
+static int destroy_stack_repr(stack_repr_t *stack_repr) {
   pthread_mutex_destroy(stack_repr->mut);
   pthread_cond_destroy(stack_repr->cond);
   destroy_op(stack_repr->op);
@@ -208,34 +287,12 @@ int destroy_stack_repr(stack_repr_t *stack_repr) {
 /*   } */
 /* } */
 
-void *forward(const op_t *op) {
-  // Acquire current and parent stack lock.  Lock for current stack
-  // should already be acquired prior to invoking forward.
-  /* pthread_mutex_lock(sp->mut); */
-  pthread_mutex_lock(sp->parent->mut);
-
-  // Publish operation package.
-  sp->parent->op->tag = op->tag;
-  sp->parent->op->value = op->value;
-  sp->parent->op->resumption = sp;
-
-  // Release parent stack lock.
-  pthread_mutex_unlock(sp->parent->mut);
-
-  // Signal parent stack.
-  pthread_cond_signal(sp->parent->cond);
-
-  // Await continuation signal.
-  pthread_cond_wait(sp->cond, sp->mut);
-  /* void *result = sp->value; */
-  /* pthread_mutex_unlock(sp->mut); */
-
-  /* return result; */
-  return resume(op->resumption, sp->value);
-}
-
-void abort_stack(void) {
+static void abort_stack(void) {
   fprintf(stderr, "error: abort stack not yet implemented.\n");
+
+  // Release current stack lock before exiting.
+  pthread_mutex_unlock(sp->mut);
+
   exit(-1);
 }
 
@@ -251,12 +308,11 @@ int destroy_handler_runtime(void) {
   return 0;
 }
 
-int init_handler(handler_t *handler, ret_handler_t ret_handler, op_handler_t op_handler, size_t num_opcodes, int* opcodes) {
+int init_handler(handler_t *handler, ret_handler_t ret_handler, op_handler_t op_handler, void *param) {
   handler_t new_handler = (handler_t)malloc(sizeof(handler_t));
   new_handler->ret = ret_handler;
   new_handler->op  = op_handler;
-  new_handler->num_opcodes = num_opcodes;
-  new_handler->opcodes = opcodes;
+  new_handler->param = param;
   *handler = new_handler;
   return 0;
 }
@@ -314,7 +370,7 @@ void* handle(computation_t comp, handler_t handler) {
   return result;
 }
 
-void* perform(int tag, const void *payload) {
+void* perform(int tag, void *payload) {
   //printf("Performing event %d\n", tag);
 
   // Acquire current and parent stack lock.
@@ -334,8 +390,10 @@ void* perform(int tag, const void *payload) {
 
   // Await continuation signal.
   pthread_cond_wait(sp->cond, sp->mut);
+
   // Check for abortive status.
   if (sp->status == ABORT) abort_stack();
+
   void *result = sp->value; // TODO FIXME: copy pointer.
   pthread_mutex_unlock(sp->mut);
 
@@ -350,6 +408,28 @@ void* resume(resumption_t *r, void *arg) {
 
   // Publish the argument.
   target->value = arg;
+
+  // Signal readiness.
+  pthread_cond_signal(target->cond);
+
+  // Release target stack lock.
+  pthread_mutex_unlock(target->mut);
+
+  // Await next event.
+  return await();
+}
+
+void* resume_with(resumption_t *r, void *arg, void *handler_param) {
+  stack_repr_t* target = r;
+
+  // Acquire target stack lock.
+  pthread_mutex_lock(target->mut);
+
+  // Publish the argument.
+  target->value = arg;
+
+  // Update own handler parameter.
+  sp->handler->param = handler_param;
 
   // Signal readiness.
   pthread_cond_signal(target->cond);
@@ -378,4 +458,30 @@ void* abort_(resumption_t *r, exn_t *e) {
 
   // Await next event.
   return await();
+}
+
+void *forward(const op_t *op) {
+  // Acquire current and parent stack lock.  Lock for current stack
+  // should already be acquired prior to invoking forward.
+  /* pthread_mutex_lock(sp->mut); */
+  pthread_mutex_lock(sp->parent->mut);
+
+  // Publish operation package.
+  sp->parent->op->tag = op->tag;
+  sp->parent->op->value = op->value;
+  sp->parent->op->resumption = sp;
+
+  // Release parent stack lock.
+  pthread_mutex_unlock(sp->parent->mut);
+
+  // Signal parent stack.
+  pthread_cond_signal(sp->parent->cond);
+
+  // Await continuation signal.
+  pthread_cond_wait(sp->cond, sp->mut);
+  /* void *result = sp->value; */
+  /* pthread_mutex_unlock(sp->mut); */
+
+  /* return result; */
+  return resume(op->resumption, sp->value);
 }
