@@ -1,36 +1,44 @@
-typedef struct stack_repr_t stack_repr_t;
-typedef stack_repr_t resumption_t;
-typedef struct op_t op_t;
-typedef struct handler_t* handler_t;
+typedef struct pthandler_stack_repr_t* pthandler_resumption_t;
+typedef struct pthandler_op_t {
+  int tag;
+  void *value;
+  pthandler_resumption_t resumption;
+} pthandler_op_t;
+typedef pthandler_op_t pthandler_exn_t;
+typedef struct pthandler_t pthandler_t;
 
-typedef void *(*computation_t)(void);
-typedef void *(*op_handler_t)(const op_t*, void*);
-typedef void *(*ret_handler_t)(void*, void*);
-/* typedef int (*handle_predicate_t)(const op_t*); */
+extern const int PTHANDLER_EUNHANDLED;
+
+typedef void *(*pthandler_thunk_t)(void);
+typedef void *(*pthandler_op_handler_t)(pthandler_op_t, void*);
+typedef void *(*pthandler_ret_handler_t)(void*, void*);
 
 typedef struct {
-  char *message;
-} exn_t;
+  int tag;
+  pthandler_op_handler_t fn;
+} pthandler_op_clause_t;
 
-// Initialise a handler.
-int init_handler(handler_t *handler, ret_handler_t ret_handler, op_handler_t op_handler, void *param);
-// Finalise a handler.
-int destroy_handler(handler_t *handler);
+pthandler_op_clause_t pthandler_op_clause_create(int tag, pthandler_op_handler_t fn);
+
+
+// Initialise a handler structure.
+void pthandler_init(  pthandler_t *handler
+                    , pthandler_ret_handler_t ret_handler
+                    , size_t num_op_clauses, pthandler_op_clause_t op_clauses[]
+                    , pthandler_op_handler_t default_op_handler  );
 
 // Install a handler.
-void* handle(computation_t comp, handler_t handler);
-// Perform an operation.
-void* perform(int op, void *payload);
-// Invoke a resumption.
-void* resume(resumption_t *r, void *arg);
-void* resume_with(resumption_t *r, void *arg, void *handler_param);
-// Abort a resumption.
-void* abort_(resumption_t *r, exn_t *e);
-// Forward an operation.
-void* forward(const op_t *op);
+void* pthandler_handle(  pthandler_thunk_t comp
+                       , pthandler_t *handler, void *handler_param  );
 
-// Initialise the runtime.
-int init_handler_runtime(void);
-// Finalise the runtime.
-int destroy_handler_runtime(void);
+// Perform an operation.
+void* pthandler_perform(int tag, void *payload);
+void pthandler_throw(int tag, void *payload);
+// Invoke a resumption.
+void* pthandler_resume(pthandler_resumption_t r, void *arg);
+void* pthandler_resume_with(pthandler_resumption_t r, void *arg, void *handler_param);
+// Abort a resumption.
+void* pthandler_abort(pthandler_resumption_t r, int tag, void *payload);
+// Forward an operation.
+void* pthandler_forward(pthandler_op_t op);
 
