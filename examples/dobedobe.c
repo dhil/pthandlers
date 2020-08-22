@@ -23,13 +23,9 @@ void* h0_op_do(const pthandlers_op_t *op, pthandlers_resumption_t r, void *param
   return pthandlers_resume(r, NULL);
 }
 
-void* h1_ret(void *value, void *param) {
-  return NULL;
-}
-
 void* wrapped_simple_loop(void) {
   pthandlers_t h1;
-  pthandlers_init(&h1, h1_ret, NULL);
+  pthandlers_init(&h1, NULL, NULL, NULL);
   void *result = pthandlers_handle(simple_loop, &h1, NULL);
   fprintf(stdout, "\n");
   return result;
@@ -37,7 +33,7 @@ void* wrapped_simple_loop(void) {
 
 int main(void) {
   pthandlers_t h0;
-  pthandlers_init(&h0, h0_ret, h0_op_do);
+  pthandlers_init(&h0, h0_ret, h0_op_do, NULL);
   pthandlers_handle(wrapped_simple_loop, &h0, NULL);
   return 0;
 }

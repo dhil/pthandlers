@@ -57,12 +57,12 @@ void *run_state_ret(void *value, void *param) {
 int main(void) {
   long n = 100000;
   pthandlers_t eval_state;
-  pthandlers_init(&eval_state, eval_state_ret, state_ops);
+  pthandlers_init(&eval_state, eval_state_ret, state_ops, NULL);
   long result = (long)pthandlers_handle(countdown, &eval_state, (void*)n);
   printf("Countdown effectful: %ld\n", result);
 
   pthandlers_t run_state;
-  pthandlers_init(&run_state, run_state_ret, state_ops);
+  pthandlers_init(&run_state, run_state_ret, state_ops, NULL);
   pair_t *p = (pair_t*)pthandlers_handle(countdown, &run_state, (void*)n);
   printf("Countdown with run_state: v = %ld, st = %ld\n", (long)(p->fst), (long)(p->snd));
   destroy_pair(p);
