@@ -20,7 +20,7 @@ purposes we can treat thread and stack as synonyms as the simulation
 do not take advantage of the concurrency or parallel aspects of
 (p)threads. In fact the control flow of any encoded program is
 intended to be sequential and entirely deterministic. As depicted in
-Figure 1 below, to run a computation `f` under some delimiter `del`
+Figure 1 below, to run some computation `f` under some delimiter `del`
 the idea is to install the delimiter on top of the current
 thread/stack, `s1`, and subsequently spawn a new thread/stack, `s2`,
 to execute the computation. Conceptually, in terms of single-threaded
@@ -40,16 +40,17 @@ programs, the stack pointer (`sp`) moves to the top of the new stack
 
 After spawning the new thread the parent thread `s1` blocks and awaits
 either the completion of `s2` or a continuation capture within
-`s2`. In order to capture the continuation within `f`, the thread `s2`
-has to unblock `s1` and subsequently block itself. As depicted in
-Figure 2 below, capturing the continuation conceptually replaces the
-delimiter `del` with a reference `k` to the child stack `s2`, and sets
-the stack pointer to point to the top of the parent stack
-`s1`. Similarly, to resume `s2`, the thread `s1` simply has to unblock
-`s2` and subsequently block itself --- whether `del` gets reinstalled
-depends on the exact nature of the control operator of
-choice. Following the resumption, the stack pointer is, conceptually,
-set to point to the top of the child stack `s2`.
+`s2`. Capturing the continuation within `f` amounts to synchronising
+the threads `s2` and `s1`, as the thread `s2` has to unblock `s1` and
+subsequently block itself. As depicted in Figure 2 below, a
+continuation capture conceptually replaces the delimiter `del` with a
+reference, `k`, to the child stack, `s2`, and sets the stack pointer
+to point to the top of the parent stack, `s1`. Similarly, to resume
+`s2`, the thread `s1` simply has to unblock `s2` and subsequently
+block itself --- whether `del` gets reinstalled depends on the exact
+nature of the control operator of choice. Following the resumption,
+the stack pointer is, conceptually, set to point to the top of the
+child stack `s2`.
 
 ```
 After stack suspension
@@ -72,7 +73,7 @@ After stack resumption
    Fig 2. Suspending and resuming stacks
 ```
 
-Blocking and unblocking can readily be implemented using mutexes and
+Stack synchronisation can readily be realised by using mutexes and
 condition variables.
 
 ### Simulating effect handlers
