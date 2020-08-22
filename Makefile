@@ -28,7 +28,7 @@ $(LIB)/pthandlers.o: $(LIB)/pthandlers.h $(LIB)/pthandlers.c
 	$(CC) $(CFLAGS) -fPIC -c $(LIB)/pthandlers.c -o $(LIB)/$(OBJTARGET)
 
 .PHONY: examples
-examples: examples/state examples/dobedobe examples/divzero
+examples: examples/state examples/dobedobe examples/divzero examples/coop
 
 examples/state: static $(LIB)/pthandlers.h examples/state.c
 	$(CC) $(CFLAGS) examples/state.c -o state $(LFLAGS)
