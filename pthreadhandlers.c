@@ -12,9 +12,7 @@ typedef pthandler_op_t pthandler_exn_t;
 
 struct pthandler_t {
   pthandler_ret_handler_t ret;
-  size_t num_op_clauses;
-  pthandler_op_clause_t *op_clauses;
-  pthandler_op_handler_t default_op_handler;
+  pthandler_op_handler_t op;
   void *param;
 };
 
@@ -28,7 +26,8 @@ typedef struct pthandler_stack_repr_t {
   void *value;
 
   // Operation package pointer.
-  pthandler_op_t op;
+  pthandler_op_t *op;
+  pthandler_resumption_t backlink;
 
   // Handler pointer.
   pthandler_t *handler;
@@ -61,10 +60,13 @@ void* h0_ret(void *value, void *param) {
   return NULL;
 }
 
-void* h0_op_do(const pthandler_op_t op, const pthandler_resumption_t r, void *param) {
+void* h0_op_do(const pthandler_op_t *op, pthandler_resumption_t r, void *param) {
   /* assert(op.tag == DO); */
   fprintf(stdout, "be ");
   fflush(stdout);
+  /* printf("Before first resume\n"); */
+  /* pthandler_resume(r, NULL); */
+  /* printf("Before second resume\n"); */
   return pthandler_resume(r, NULL);
 }
 
@@ -78,7 +80,7 @@ void* h1_ret(void *value, void *param) {
 
 void* wrapped_simple_loop(void) {
   pthandler_t h1;
-  pthandler_init(&h1, h1_ret, 0, NULL, NULL);
+  pthandler_init(&h1, h1_ret, NULL);
   void *result = pthandler_handle(simple_loop, &h1, NULL);
   fprintf(stdout, "\n");
   return result;
@@ -97,24 +99,14 @@ void* eval_state_ret(void *value, void *param) {
   return (void*)value;
 }
 
-void* state_op_get(pthandler_op_t op, pthandler_resumption_t r, void *st) {
-  return pthandler_resume_with(r, st, st);
-}
-
-void* state_op_put(pthandler_op_t op, pthandler_resumption_t r, void *st) {
-  return pthandler_resume_with(r, NULL, op.value);
-}
-
-void* eval_state_op(pthandler_op_t op, pthandler_resumption_t r, void *st) {
-  switch (op.tag) {
+void* state_ops(const pthandler_op_t *op, pthandler_resumption_t r, void *st) {
+  switch (op->tag) {
   case GET:
     return pthandler_resume_with(r, st, st);
-    break;
   case PUT:
-    return pthandler_resume_with(r, NULL, op.value);
-    break;
+    return pthandler_resume_with(r, NULL, op->value);
   default:
-    return pthandler_forward(op);
+    return pthandler_reperform(op);
   }
 }
 
@@ -160,27 +152,24 @@ void *run_state_ret(void *value, void *param) {
 /* } */
 
 int main(void) {
-  /* /\* pthandler_perform(123, NULL); *\/ */
+  /* pthandler_perform(123, NULL); */
   pthandler_t h0;
-  pthandler_op_clause_t h0_op_clauses[] = { {DO, h0_op_do} };
-  pthandler_init(&h0, h0_ret, 1, h0_op_clauses, NULL);
+  pthandler_init(&h0, h0_ret, h0_op_do);
   pthandler_handle(wrapped_simple_loop, &h0, NULL);
-  /* /\* destroy_handler(&h0); *\/ */
+  /* destroy_handler(&h0); */
 
-  long n = 1000;
+  long n = 100000;
 
   /* printf("Countdown direct: %ld\n", countdown_direct((void*)n)); */
   /* printf("Countdown loop: %ld\n", countdown_loop((void*)n)); */
 
   pthandler_t eval_state;
-  pthandler_op_clause_t eval_state_op_clauses[] = {  {GET, state_op_get}
-                                                   , {PUT, state_op_put}  };
-  pthandler_init(&eval_state, eval_state_ret, 2, eval_state_op_clauses, NULL);
+  pthandler_init(&eval_state, eval_state_ret, state_ops);
   long result = (long)pthandler_handle(countdown, &eval_state, (void*)n);
   printf("Countdown effectful: %ld\n", result);
 
   pthandler_t run_state;
-  pthandler_init(&run_state, run_state_ret, 2, eval_state_op_clauses, NULL);
+  pthandler_init(&run_state, run_state_ret, state_ops);
   pair_t *p = (pair_t*)pthandler_handle(countdown, &run_state, (void*)n);
   printf("Countdown with run_state: v = %ld, st = %ld\n", (long)(p->fst), (long)(p->snd));
   destroy_pair(p);
@@ -188,27 +177,34 @@ int main(void) {
   return 0;
 }
 
+static void* generic_handler_return(void *value, void *param) {
+  return value;
+}
+
+static void* generic_handler_op(const pthandler_op_t *op, pthandler_resumption_t r, void *param) {
+  return pthandler_reperform(op);
+}
+
 void pthandler_init(  pthandler_t *handler
                     , pthandler_ret_handler_t ret_handler
-                    , size_t num_op_clauses, pthandler_op_clause_t *op_clauses
-                    , pthandler_op_handler_t default_op_handler ) {
-  handler->ret                = ret_handler;
-  handler->num_op_clauses     = num_op_clauses;
-  handler->op_clauses         = op_clauses;
-  handler->default_op_handler = default_op_handler;
+                    , pthandler_op_handler_t op_handler ) {
+  handler->ret = ret_handler == NULL ? generic_handler_return : ret_handler;
+  handler->op  = op_handler == NULL ? generic_handler_op : op_handler;
 }
 
 /* Runtime implementation. */
 // Thread-local "stack" pointer.
 static _Thread_local stack_repr_t *sp = NULL;
 
-static void init_stack_repr(stack_repr_t *repr, pthread_mutex_t *mut, pthread_cond_t *cond, stack_repr_t *parent) {
+static void init_stack_repr(  stack_repr_t *repr
+                            , pthread_mutex_t *mut, pthread_cond_t *cond
+                            , pthandler_op_t *op
+                            , stack_repr_t *parent) {
   repr->status  = NORMAL;
   repr->mut     = mut;
   repr->cond    = cond;
   repr->value   = NULL;
-  repr->op.tag  = NOOP;
-  repr->op.value = NULL;
+  repr->op      = op;
   repr->handler = NULL;
   repr->parent  = parent;
 }
@@ -219,7 +215,8 @@ static stack_repr_t* alloc_stack_repr(void) {
   pthread_mutex_init(mut, NULL); // TODO check return value.
   pthread_cond_t *cond = (pthread_cond_t*)malloc(sizeof(pthread_cond_t));
   pthread_cond_init(cond, NULL); // TODO check return value.
-  init_stack_repr(stack_repr, mut, cond, NULL);
+  pthandler_op_t *op = (pthandler_op_t*)malloc(sizeof(pthandler_op_t));
+  init_stack_repr(stack_repr, mut, cond, op, NULL);
   return stack_repr;
 }
 
@@ -229,6 +226,7 @@ static void destroy_stack_repr(stack_repr_t *stack_repr) {
   /* destroy_op(stack_repr->op); */
   free(stack_repr->mut);
   free(stack_repr->cond);
+  free(stack_repr->op);
   free(stack_repr);
   stack_repr = NULL;
 }
@@ -239,8 +237,8 @@ static void finalise_stack(int tag, void *value, int exitcode) {
   pthread_mutex_lock(sp->parent->mut);
 
   // Publish return package.
-  sp->parent->op.tag = tag;
-  sp->parent->op.value = value;
+  sp->parent->op->tag = tag;
+  sp->parent->op->value = value;
 
   // Notify parent stack and release its lock.
   pthread_cond_signal(sp->parent->cond);
@@ -262,8 +260,9 @@ static void* init_stack(void *arg) {
   // Create and initialise stack structure representation.
   pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+  pthandler_op_t op = { NOOP, NULL };
   stack_repr_t stack_repr;
-  init_stack_repr(&stack_repr, &mut, &cond, data->parent_repr);
+  init_stack_repr(&stack_repr, &mut, &cond, &op, data->parent_repr);
   sp = &stack_repr;
 
   // Run computation
@@ -279,15 +278,8 @@ static void* await(void) {
   // Await an event.
   pthread_cond_wait(sp->cond, sp->mut);
 
-  if (sp->op.tag == RETURN) return sp->handler->ret(sp->op.value, sp->handler->param);
-  pthandler_op_handler_t fn = sp->handler->default_op_handler;
-  for (int i = 0; i < sp->handler->num_op_clauses; i++) {
-    if (sp->handler->op_clauses[i].tag == sp->op.tag) {
-      fn = sp->handler->op_clauses[i].fn;
-      break;
-    }
-  }
-  return fn(sp->op, (pthandler_resumption_t)sp->value, sp->handler->param);
+  if (sp->op->tag == RETURN) return sp->handler->ret(sp->op->value, sp->handler->param);
+  else return sp->handler->op(sp->op, sp->backlink, sp->handler->param);
 }
 
 void* pthandler_handle(pthandler_thunk_t comp, pthandler_t *handler, void *handler_param) {
@@ -348,50 +340,45 @@ void* pthandler_handle(pthandler_thunk_t comp, pthandler_t *handler, void *handl
   return result;
 }
 
-static stack_repr_t* locate_handler(int tag, stack_repr_t *sp) {
-  // An uninitialised context implies that there is no suitable
-  // handler for `tag` installed.
-  if (sp == NULL) return NULL;
+/* static stack_repr_t* locate_handler(int tag, stack_repr_t *sp) { */
+/*   // An uninitialised context implies that there is no suitable */
+/*   // handler for `tag` installed. */
+/*   if (sp == NULL) return NULL; */
 
-  if (sp->handler->default_op_handler != NULL) return sp;
+/*   if (sp->handler->default_op_handler != NULL) return sp; */
 
-  for (int i = 0; i < sp->handler->num_op_clauses; i++) {
-    if (sp->handler->op_clauses[i].tag == tag) return sp;
-  }
+/*   for (int i = 0; i < sp->handler->num_op_clauses; i++) { */
+/*     if (sp->handler->op_clauses[i].tag == tag) return sp; */
+/*   } */
 
-  return locate_handler(tag, sp->parent);
-}
+/*   return locate_handler(tag, sp->parent); */
+/* } */
 
 void* pthandler_perform(int tag, void *payload) {
-  // Locate a suitable handler.
-  stack_repr_t *target = locate_handler(tag, sp->parent);
-
   // An uninitialised context implies that no handler has been
   // installed.
-  if (target == NULL) abort();
+  if (sp == NULL || sp->parent == NULL) abort();
 
   // Acquire current and target stack locks.
   pthread_mutex_lock(sp->mut);
-  pthread_mutex_lock(target->mut);
+  pthread_mutex_lock(sp->parent->mut);
 
   // Publish operation package.
-  target->op.tag = tag;
-  target->op.value = payload;
-
-  // Establish back link.
-  target->value = sp;
+  sp->parent->op->tag = tag;
+  sp->parent->op->value = payload;
+  sp->parent->backlink = sp;
 
   // Release target stack lock.
-  pthread_mutex_unlock(target->mut);
+  pthread_mutex_unlock(sp->parent->mut);
 
   // Signal target stack.
-  pthread_cond_signal(target->cond);
+  pthread_cond_signal(sp->parent->cond);
 
   // Await continuation signal.
   pthread_cond_wait(sp->cond, sp->mut);
 
   // Check for abortive status.
-  if (sp->status == ABORT) pthandler_throw(sp->op.tag, sp->op.value);
+  if (sp->status == ABORT) pthandler_throw(sp->op->tag, sp->op->value);
 
   void *result = sp->value; // TODO FIXME: copy pointer.
 
@@ -443,13 +430,14 @@ void* pthandler_resume_with(pthandler_resumption_t r, void *arg, void *handler_p
 
 void* pthandler_abort(pthandler_resumption_t r, int tag, void *payload) {
   stack_repr_t *target = r;
+
   // Acquire target stack lock.
   pthread_mutex_lock(target->mut);
 
   // Publish exception.
   target->status = ABORT;
-  target->op.tag = tag;
-  target->op.value = payload;
+  target->op->tag = tag;
+  target->op->value = payload;
 
   // Signal target stack.
   pthread_cond_signal(target->cond);
@@ -461,31 +449,27 @@ void* pthandler_abort(pthandler_resumption_t r, int tag, void *payload) {
   return await();
 }
 
-void* pthandler_forward(pthandler_op_t op) {
-  // Acquire parent stack lock.  Lock for current stack should already
-  // be acquired prior to invoking forward.
-  pthread_mutex_lock(sp->parent->mut);
+/* void* pthandler_forward(pthandler_op_t op) { */
+/*   // Acquire parent stack lock.  Lock for current stack should already */
+/*   // be acquired prior to invoking forward. */
+/*   pthread_mutex_lock(sp->parent->mut); */
 
-  // Publish operation package.
-  sp->parent->op.tag        = op.tag;
-  sp->parent->op.value      = op.value;
+/*   // Publish operation package. */
+/*   sp->parent->op->tag        = op->tag; */
+/*   sp->parent->op->value      = op->value; */
+/*   sp->parent->op->resumption = op->resumption; */
 
-  // Save current back link.
-  pthandler_resumption_t r = (pthandler_resumption_t)sp->value;
-  // Establish back link.
-  sp->parent->value = sp;
+/*   // Release parent stack lock. */
+/*   pthread_mutex_unlock(sp->parent->mut); */
 
-  // Release parent stack lock.
-  pthread_mutex_unlock(sp->parent->mut);
+/*   // Signal parent stack. */
+/*   pthread_cond_signal(sp->parent->cond); */
 
-  // Signal parent stack.
-  pthread_cond_signal(sp->parent->cond);
+/*   // Await continuation signal. */
+/*   pthread_cond_wait(sp->cond, sp->mut); */
 
-  // Await continuation signal.
-  pthread_cond_wait(sp->cond, sp->mut);
-
-  return pthandler_resume(r, sp->value);
-}
+/*   return pthandler_resume(r, sp->value); */
+/* } */
 
 /* pthandler_exn_t* pthandler_exn_create(int tag, void *payload) { */
 /*   pthandler_op_t *exn = alloc_op(); */
@@ -497,6 +481,26 @@ void* pthandler_forward(pthandler_op_t op) {
 /* void pthandler_exn_destroy(pthandler_exn_t *exn) { */
 /*   destroy_op((pthandler_op_t*)exn); */
 /* } */
+
+void* pthandler_reperform(const pthandler_op_t *op) {
+  // Acquire parent stack lock.  Lock for current stack should already
+  // be acquired prior to invoking forward.
+  pthread_mutex_lock(sp->parent->mut);
+
+  // Publish operation package.
+  sp->parent->op->tag        = op->tag;
+  sp->parent->op->value      = op->value;
+  sp->parent->backlink       = sp->backlink;
+  sp->backlink = NULL;
+
+  // Release parent stack lock.
+  pthread_mutex_unlock(sp->parent->mut);
+
+  // Signal parent stack.
+  pthread_cond_signal(sp->parent->cond);
+
+  return await();
+}
 
 void pthandler_throw(int tag, void *payload) {
   finalise_stack(tag, payload, 0);

@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wpedantic -Wall -g -pthread -foptimize-sibling-calls -O3
+CFLAGS=-Wpedantic -Wall -g -pthread -foptimize-sibling-calls -O1
 TARGET=demo
 
 .PHONY: all
