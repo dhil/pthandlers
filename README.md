@@ -42,15 +42,15 @@ After spawning the new thread the parent thread `s1` blocks and awaits
 either the completion of `s2` or a continuation capture within
 `s2`. Capturing the continuation within `f` amounts to synchronising
 the threads `s2` and `s1`, as the thread `s2` has to unblock `s1` and
-subsequently block itself. As depicted in Figure 2 below, a
-continuation capture conceptually replaces the delimiter `del` with a
-reference, `k`, to the child stack, `s2`, and sets the stack pointer
-to point to the top of the parent stack, `s1`. Similarly, to resume
-`s2`, the thread `s1` simply has to unblock `s2` and subsequently
-block itself --- whether `del` gets reinstalled depends on the exact
-nature of the control operator of choice. Following the resumption,
-the stack pointer is, conceptually, set to point to the top of the
-child stack `s2`.
+subsequently block itself to await being resumed. As depicted in Figure 2
+below, a continuation capture conceptually replaces the delimiter
+`del` with a reference, `k`, to the child stack, `s2`, and sets the
+stack pointer to point to the top of the parent stack,
+`s1`. Similarly, to resume `s2`, the thread `s1` simply has to unblock
+`s2` and subsequently block itself --- whether `del` gets reinstalled
+depends on the exact nature of the control operator of
+choice. Following the resumption, the stack pointer is, conceptually,
+set to point to the top of the child stack `s2`.
 
 ```
 After stack suspension
