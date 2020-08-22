@@ -5,15 +5,15 @@ handlers using POSIX threads (pthreads).
 
 ## Encoding affine effect handlers with pthreads
 
-The encoding strategy utilises the insights of Kumar et al. (1998),
+The encoding strategy utilises the insights of Kumar *et al.* (1998),
 who implement one-shot delimited continuations using threads, as the
 basis for simulating the implementation of effect handlers in
-Multicore OCaml (Dolan et al. (2015)), which uses a variation of
-segmented stacks á la Bruggeman et al. (1996).
+Multicore OCaml (Dolan *et al.* (2015)), which uses a variation of
+segmented stacks á la Bruggeman *et al.* (1996).
 
 ### Simulating delimited control with threads
 
-The key insight from Kumar et al. (1998) is that each thread has its
+The key insight from Kumar *et al.* (1998) is that each thread has its
 own stack and by establishing a parent-child relationship between the
 thread-stacks, we can simulate delimited control. For all intents and
 purposes we can treat thread and stack as synonyms as the simulation
