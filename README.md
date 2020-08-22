@@ -111,7 +111,7 @@ This encoding relies heavily on tail-call optimisation (i.e. gcc's
 unreliable, in C compilers. In addition this implementation also
 depends on one or more flags from the `-O1` optimisation bundle that I
 have yet to discover. Currently, without passing `-O1` it appears that
-`gcc` (version 7.5.0) fails to tail call optimise some functions.
+`gcc` (version 7.5.0) fails to tail-call optimise some functions.
 
 ## Future work
 
