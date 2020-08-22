@@ -44,10 +44,10 @@ Figure 2 below, capturing the continuation conceptually replaces the
 delimiter `del` with a reference `k` to the child stack `s2`, and sets
 the stack pointer to point to the top of the parent stack
 `s1`. Similarly, to resume `s2`, the thread `s1` simply has to unblock
-`s2` and subsequently block itself --- depending on which delimited
-control operator is being encoded the delimiter `del` may or may not
-be reinstalled. Again conceptually the stack pointer would be set to
-point to the top of the child stack `s2`.
+`s2` and subsequently block itself --- whether `del` gets reinstalled
+depends on the exact nature of the control operator of
+choice. Following the resumption, the stack pointer is, conceptually,
+set to point to the top of the child stack `s2`.
 
 ```
 After stack suspension
