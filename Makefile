@@ -39,6 +39,9 @@ examples/dobedobe: static $(LIB)/pthandlers.h examples/dobedobe.c
 examples/divzero: static $(LIB)/pthandlers.h examples/divzero.c
 	$(CC) $(CFLAGS) examples/divzero.c -o divzero $(LFLAGS)
 
+examples/coop: static $(LIB)/pthandlers.h examples/coop.c
+	$(CC) $(CFLAGS) examples/coop.c -o coop $(LFLAGS)
+
 
 .PHONY: clean
 clean:

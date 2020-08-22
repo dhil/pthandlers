@@ -171,8 +171,9 @@ void* pthandlers_handle(pthandlers_thunk_t comp, pthandlers_t *handler, void *ha
   // Prepare stack initialisation payload.
   _stack_data_t stack_data = {comp, sp};
 
-  // Acquire current stack lock.
-  pthread_mutex_lock(sp->mut);
+  // Acquire current stack lock (if this application is recursive it
+  // will already have been acquired).
+  pthread_mutex_trylock(sp->mut);
 
   // Install handler on the current stack.
   sp->handler = handler;

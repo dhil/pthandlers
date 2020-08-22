@@ -29,7 +29,7 @@ This repository contains some example programs. To build them all
 simply type `make all`. Alternatively, they can be built individually
 
 ```shell
-$ make examples/{dobedobe,state,divzero}
+$ make examples/{coop,divzero,dobedobe,state}
 ```
 
 The resulting binaries are placed in the root of this repository.
