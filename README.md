@@ -102,7 +102,7 @@ or `make shared` respectively.
 ### Examples
 
 This repository contains some example programs. To build them all
-simply type `make all`. Alternatively, they can be built individually
+simply type `make examples`. Alternatively, they can be built individually
 
 ```shell
 $ make examples/{coop,divzero,dobedobe,state}
