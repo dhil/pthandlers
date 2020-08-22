@@ -132,6 +132,11 @@ static void* init_stack(void *arg) {
   init_stack_repr(&stack_repr, &mut, &cond, &op, data->parent_repr);
   sp = &stack_repr;
 
+  // The following seemingly odd sequence serve to sequentialise the
+  // observable effects.
+  pthread_mutex_lock(sp->parent->mut);
+  pthread_mutex_unlock(sp->parent->mut);
+
   // Run computation
   void *result = data->comp();
 
