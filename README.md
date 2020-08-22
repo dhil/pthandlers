@@ -3,11 +3,50 @@
 This C library provides a proof-of-concept encoding of affine effect
 handlers using POSIX threads (pthreads).
 
+## Encoding affine effect handlers with pthreads
+
 The encoding strategy utilises the insights of Kumar et al. (1998),
 who implement one-shot delimited continuations using threads, as the
 basis for simulating the implementation of effect handlers in
 Multicore OCaml (Dolan et al. (2015)), which uses a variation of
 segmented stacks á la Bruggeman et al. (1996).
+
+### Simulating delimited control with threads
+
+The key insight from Kumar et al. (1998) is that each thread has its
+own stack and by establishing a parent-child relationship between the
+thread-stacks, we can simulate delimited control. For all intents and
+purposes we can treat thread and stack as synonyms as the simulation
+do not take advantage of the concurrency or parallel aspects of
+(p)threads. As depicted in Figure 1 below, to run a computation `f`
+under some delimiter `del` the idea is to install the delimiter on top
+of the current thread/stack, `s1`, and then spawn a new thread/stack,
+`s2`, to execute the computation.
+
+```
+  s1         s2
++-----+    +-----+
+|     |    |     |
+|     |    | f() |
+| del |<---|     |<- stack pointer (sp)
++-----+    +-----+
+---------------------------------------
+      Fig 1. Execution stacks
+```
+
+After spawning the new thread the parent thread `s1` blocks and awaits
+either the completion of `s2` or a continuation capture within
+`s2`. In order to capture the continuation within `f`, the thread `s2`
+has to unblock `s1` and subsequently block itself. Similarly, to
+resume `s2`, the thread `s1` simply has to unblock `s2` and
+subsequently block itself.
+
+Blocking and unblocking can readily be implemented using mutexes and
+condition variables.
+
+### Simulating effect handlers
+
+TODO...
 
 ## Building
 
