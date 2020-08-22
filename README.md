@@ -20,8 +20,10 @@ purposes we can treat thread and stack as synonyms as the simulation
 do not take advantage of the concurrency or parallel aspects of
 (p)threads. As depicted in Figure 1 below, to run a computation `f`
 under some delimiter `del` the idea is to install the delimiter on top
-of the current thread/stack, `s1`, and then spawn a new thread/stack,
-`s2`, to execute the computation.
+of the current thread/stack, `s1`, and subsequently spawn a new
+thread/stack, `s2`, to execute the computation. Conceptually, in terms
+of single-threaded programs, the stack pointer (`sp`) moves to the top
+of the new stack `s2`.
 
 ```
   s1         s2
@@ -37,9 +39,25 @@ of the current thread/stack, `s1`, and then spawn a new thread/stack,
 After spawning the new thread the parent thread `s1` blocks and awaits
 either the completion of `s2` or a continuation capture within
 `s2`. In order to capture the continuation within `f`, the thread `s2`
-has to unblock `s1` and subsequently block itself. Similarly, to
-resume `s2`, the thread `s1` simply has to unblock `s2` and
-subsequently block itself.
+has to unblock `s1` and subsequently block itself. As depicted in
+Figure 2 below, capturing the continuation conceptually replaces the
+delimiter `del` with a reference `k` to the child stack `s2`, and sets
+the stack pointer to point to the top of the parent stack
+`s1`. Similarly, to resume `s2`, the thread `s1` simply has to unblock
+`s2` and subsequently block itself. Again conceptually the stack
+pointer would be set to point to the top of the child stack `s2`.
+
+```
+  s1         s2
++-----+        +-----+
+|     |        |     |
+|     |        | f() |
+|  k  |------->|     |
+|     |<- sp   +-----+
++-----+
+---------------------------------------------
+   Fig 2. Suspending and resuming stacks
+```
 
 Blocking and unblocking can readily be implemented using mutexes and
 condition variables.
