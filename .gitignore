@@ -54,3 +54,9 @@ dkms.conf
 # Ignore temporaries
 *~
 \#*
+
+# Ignore binaries
+coop
+divzero
+dobedobe
+state
