@@ -18,12 +18,14 @@ own stack and by establishing a parent-child relationship between the
 thread-stacks, we can simulate delimited control. For all intents and
 purposes we can treat thread and stack as synonyms as the simulation
 do not take advantage of the concurrency or parallel aspects of
-(p)threads. As depicted in Figure 1 below, to run a computation `f`
-under some delimiter `del` the idea is to install the delimiter on top
-of the current thread/stack, `s1`, and subsequently spawn a new
-thread/stack, `s2`, to execute the computation. Conceptually, in terms
-of single-threaded programs, the stack pointer (`sp`) moves to the top
-of the new stack `s2`.
+(p)threads. In fact the control flow of any encoded program is
+intended to be sequential and entirely deterministic. As depicted in
+Figure 1 below, to run a computation `f` under some delimiter `del`
+the idea is to install the delimiter on top of the current
+thread/stack, `s1`, and subsequently spawn a new thread/stack, `s2`,
+to execute the computation. Conceptually, in terms of single-threaded
+programs, the stack pointer (`sp`) moves to the top of the new stack
+`s2`.
 
 ```
   s1         s2
