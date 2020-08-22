@@ -78,6 +78,11 @@ condition variables.
 
 ### Simulating effect handlers
 
+The novelty of this encoding does not lie in how delimited control is
+simulated, but rather, how the technique outlined in the previous
+section is adapted to encode the structured interface of effect
+handlers.
+
 TODO...
 
 ## Building
