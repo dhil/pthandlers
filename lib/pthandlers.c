@@ -44,11 +44,18 @@ static void* generic_handler_op(const pthandlers_op_t *op, pthandlers_resumption
   return pthandlers_reperform(op);
 }
 
-void pthandlers_init(  pthandlers_t *handler
+static void* generic_handler_exn(const pthandlers_op_t *exn, void *param) {
+  pthandlers_rethrow(exn);
+  return NULL; // unreachable.
+}
+
+void pthandlers_init( pthandlers_t *handler
                     , pthandlers_ret_handler_t ret_handler
-                    , pthandlers_op_handler_t op_handler ) {
+                    , pthandlers_op_handler_t op_handler
+                    , pthandlers_exn_handler_t exn_handler) {
   handler->ret = ret_handler == NULL ? generic_handler_return : ret_handler;
   handler->op  = op_handler == NULL ? generic_handler_op : op_handler;
+  handler->exn = exn_handler == NULL ? generic_handler_exn : exn_handler;
 }
 
 /* Runtime implementation. */
@@ -98,6 +105,7 @@ static void finalise_stack(int tag, void *value, int exitcode) {
   // Publish return package.
   sp->parent->op->tag = tag;
   sp->parent->op->value = value;
+  sp->parent->backlink = NULL;
 
   // Notify parent stack and release its lock.
   pthread_cond_signal(sp->parent->cond);
@@ -138,6 +146,7 @@ static void* await(void) {
   pthread_cond_wait(sp->cond, sp->mut);
 
   if (sp->op->tag == RETURN) return sp->handler->ret(sp->op->value, sp->handler->param);
+  else if (sp->backlink == NULL) return sp->handler->exn(sp->op, sp->handler->param);
   else return sp->handler->op(sp->op, sp->backlink, sp->handler->param);
 }
 
@@ -199,20 +208,6 @@ void* pthandlers_handle(pthandlers_thunk_t comp, pthandlers_t *handler, void *ha
   return result;
 }
 
-/* static stack_repr_t* locate_handler(int tag, stack_repr_t *sp) { */
-/*   // An uninitialised context implies that there is no suitable */
-/*   // handler for `tag` installed. */
-/*   if (sp == NULL) return NULL; */
-
-/*   if (sp->handler->default_op_handler != NULL) return sp; */
-
-/*   for (int i = 0; i < sp->handler->num_op_clauses; i++) { */
-/*     if (sp->handler->op_clauses[i].tag == tag) return sp; */
-/*   } */
-
-/*   return locate_handler(tag, sp->parent); */
-/* } */
-
 void* pthandlers_perform(int tag, void *payload) {
   // An uninitialised context implies that no handler has been
   // installed.
@@ -248,6 +243,7 @@ void* pthandlers_perform(int tag, void *payload) {
 
 void* pthandlers_resume(pthandlers_resumption_t r, void *arg) {
   stack_repr_t *target = r;
+  sp->backlink = NULL; // `r` is an alias of `sp->backlink`.
 
   // Acquire target stack lock.
   pthread_mutex_lock(target->mut);
@@ -267,6 +263,7 @@ void* pthandlers_resume(pthandlers_resumption_t r, void *arg) {
 
 void* pthandlers_resume_with(pthandlers_resumption_t r, void *arg, void *handler_param) {
   stack_repr_t *target = r;
+  sp->backlink = NULL; // `r` is an alias of `sp->backlink`.
 
   // Acquire target stack lock.
   pthread_mutex_lock(target->mut);
@@ -308,39 +305,6 @@ void* pthandlers_abort(pthandlers_resumption_t r, int tag, void *payload) {
   return await();
 }
 
-/* void* pthandlers_forward(pthandlers_op_t op) { */
-/*   // Acquire parent stack lock.  Lock for current stack should already */
-/*   // be acquired prior to invoking forward. */
-/*   pthread_mutex_lock(sp->parent->mut); */
-
-/*   // Publish operation package. */
-/*   sp->parent->op->tag        = op->tag; */
-/*   sp->parent->op->value      = op->value; */
-/*   sp->parent->op->resumption = op->resumption; */
-
-/*   // Release parent stack lock. */
-/*   pthread_mutex_unlock(sp->parent->mut); */
-
-/*   // Signal parent stack. */
-/*   pthread_cond_signal(sp->parent->cond); */
-
-/*   // Await continuation signal. */
-/*   pthread_cond_wait(sp->cond, sp->mut); */
-
-/*   return pthandlers_resume(r, sp->value); */
-/* } */
-
-/* pthandlers_exn_t* pthandlers_exn_create(int tag, void *payload) { */
-/*   pthandlers_op_t *exn = alloc_op(); */
-/*   exn->tag = tag; */
-/*   exn->value = payload; */
-/*   return (pthandlers_exn_t*)exn; */
-/* } */
-
-/* void pthandlers_exn_destroy(pthandlers_exn_t *exn) { */
-/*   destroy_op((pthandlers_op_t*)exn); */
-/* } */
-
 void* pthandlers_reperform(const pthandlers_op_t *op) {
   // Acquire parent stack lock.  Lock for current stack should already
   // be acquired prior to invoking forward.
@@ -363,4 +327,8 @@ void* pthandlers_reperform(const pthandlers_op_t *op) {
 
 void pthandlers_throw(int tag, void *payload) {
   finalise_stack(tag, payload, 0);
+}
+
+void pthandlers_rethrow(const pthandlers_exn_t *exn) {
+  pthandlers_throw(exn->tag, exn->value);
 }

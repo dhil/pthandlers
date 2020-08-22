@@ -11,18 +11,21 @@ extern const int PTHANDLERS_EUNHANDLED;
 
 typedef void *(*pthandlers_thunk_t)(void);
 typedef void *(*pthandlers_op_handler_t)(const pthandlers_op_t*, pthandlers_resumption_t, void*);
+typedef void *(*pthandlers_exn_handler_t)(const pthandlers_op_t*, void*);
 typedef void *(*pthandlers_ret_handler_t)(void*, void*);
 
 typedef struct pthandlers_t {
   pthandlers_ret_handler_t ret;
   pthandlers_op_handler_t op;
+  pthandlers_exn_handler_t exn;
   void *param;
 } pthandlers_t;
 
 // Initialise a handler structure.
 void pthandlers_init( pthandlers_t *handler
                     , pthandlers_ret_handler_t ret_handler
-                    , pthandlers_op_handler_t op_handler );
+                    , pthandlers_op_handler_t op_handler
+                    , pthandlers_exn_handler_t exn_handler );
 
 // Install a handler.
 void* pthandlers_handle( pthandlers_thunk_t comp
@@ -30,13 +33,13 @@ void* pthandlers_handle( pthandlers_thunk_t comp
 
 // Perform an operation.
 void* pthandlers_perform(int tag, void *payload);
-void pthandlers_throw(int tag, void *payload);
+void  pthandlers_throw(int tag, void *payload);
 // Invoke a resumption.
 void* pthandlers_resume(pthandlers_resumption_t r, void *arg);
 void* pthandlers_resume_with(pthandlers_resumption_t r, void *arg, void *handler_param);
 // Abort a resumption.
 void* pthandlers_abort(pthandlers_resumption_t r, int tag, void *payload);
 // Forward an operation.
-/* void* pthandlers_forward(pthandlers_exn_t op); */
 void* pthandlers_reperform(const pthandlers_op_t *op);
+void  pthandlers_rethrow(const pthandlers_exn_t *exn);
 #endif
