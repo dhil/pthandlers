@@ -106,10 +106,24 @@ void* run_next(queue_t *q) {
   else return pthandlers_resume_with(queue_pop(q), NULL, q);
 }
 
+struct thunk_t {
+  pthandlers_thunk_t fn;
+};
+
+typedef struct thunk_t* thunk_t;
+
+thunk_t alloc_thunk(pthandlers_thunk_t fn) {
+  thunk_t t = (thunk_t)malloc(sizeof(struct thunk_t));
+  t->fn = fn;
+  return t;
+}
+
 enum { FORK = 300, YIELD };
 
 void gfork(void *(*f)(void)) {
-  pthandlers_perform(FORK, (void*)f);
+  thunk_t g = alloc_thunk(f);
+  pthandlers_perform(FORK, g);
+  free(g);
 }
 
 void gyield(void) {
@@ -123,7 +137,7 @@ void* rr_ret(void *result, queue_t *q) {
 void* rr_ops(const pthandlers_op_t *op, pthandlers_resumption_t r, queue_t *q) {
   switch (op->tag) {
   case FORK:
-    return pthandlers_handle((pthandlers_thunk_t)op->value, &hrr, queue_push(q, (void*)r));
+    return pthandlers_handle(((thunk_t)op->value)->fn, &hrr, queue_push(q, (void*)r));
   case YIELD:
     return run_next(queue_push(q, r));
   default:
