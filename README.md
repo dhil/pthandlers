@@ -43,6 +43,13 @@ depends on one or more flags from the `-O1` optimisation bundle that I
 have yet to discover. Currently, without passing `-O1` it appears that
 `gcc` (version 7.5.0) fails to tail call optimise some functions.
 
+## Future work
+
+The current implementation only supports unary deep handlers. A
+natural extension would be to support unary shallow handlers. Going
+even further, it would be interesting to encode both deep and shallow
+variations of multi-handlers.
+
 ## Acknowledgements
 
 This work was done whilst I was being supported by

@@ -13,11 +13,15 @@ all: lib examples
 lib: static shared
 
 .PHONY: static
-static: $(LIB)/$(OBJTARGET)
-	ar rcs $(LIB)/$(STTARGET) $(LIB)/$(OBJTARGET)
+static: $(LIB)/$(STTARGET)
 
 .PHONY: shared
-shared: $(LIB)/$(OBJTARGET)
+shared: $(LIB)/$(SHTARGET)
+
+$(LIB)/$(STTARGET): $(LIB)/$(OBJTARGET)
+	ar rcs $(LIB)/$(STTARGET) $(LIB)/$(OBJTARGET)
+
+$(LIB)/$(SHTARGET): $(LIB)/$(OBJTARGET)
 	$(CC) -shared $(LIB)/$(OBJTARGET) -o $(LIB)/$(SHTARGET)
 
 $(LIB)/pthandlers.o: $(LIB)/pthandlers.h $(LIB)/pthandlers.c
