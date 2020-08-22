@@ -90,8 +90,8 @@ $ make lib
 
 This rule assembles the static library `libpthandlers.a` and the
 shared library `libpthandlers.so` and outputs both in the `lib/`
-directory. To build either library variant alone use `make static` or
-`make shared` respectively.
+directory. To build either library variant alone invoke `make static`
+or `make shared` respectively.
 
 ### Examples
 
