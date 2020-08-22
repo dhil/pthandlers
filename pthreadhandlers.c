@@ -49,7 +49,6 @@ void* simple_loop(void) {
   printf("Loop start\n");
   int n = 1000000;
   /* n = 74798; */
-  n = 5;
   for (int i = 0; i < n; i++) {
     fprintf(stdout, "do ");
     fflush(stdout);
@@ -62,11 +61,11 @@ void* h0_ret(void *value, void *param) {
   return NULL;
 }
 
-void* h0_op_do(const pthandler_op_t op, void *param) {
+void* h0_op_do(const pthandler_op_t op, const pthandler_resumption_t r, void *param) {
   /* assert(op.tag == DO); */
   fprintf(stdout, "be ");
   fflush(stdout);
-  return pthandler_resume(op.resumption, NULL);
+  return pthandler_resume(r, NULL);
 }
 
 void* h1_ret(void *value, void *param) {
@@ -82,7 +81,6 @@ void* wrapped_simple_loop(void) {
   pthandler_init(&h1, h1_ret, 0, NULL, NULL);
   void *result = pthandler_handle(simple_loop, &h1, NULL);
   fprintf(stdout, "\n");
-  //destroy_handler(&h1);
   return result;
 }
 
@@ -99,21 +97,21 @@ void* eval_state_ret(void *value, void *param) {
   return (void*)value;
 }
 
-void* state_op_get(pthandler_op_t op, void *st) {
-  return pthandler_resume_with(op.resumption, st, st);
+void* state_op_get(pthandler_op_t op, pthandler_resumption_t r, void *st) {
+  return pthandler_resume_with(r, st, st);
 }
 
-void* state_op_put(pthandler_op_t op, void *st) {
-  return pthandler_resume_with(op.resumption, NULL, op.value);
+void* state_op_put(pthandler_op_t op, pthandler_resumption_t r, void *st) {
+  return pthandler_resume_with(r, NULL, op.value);
 }
 
-void* eval_state_op(pthandler_op_t op, void *st) {
+void* eval_state_op(pthandler_op_t op, pthandler_resumption_t r, void *st) {
   switch (op.tag) {
   case GET:
-    return pthandler_resume_with(op.resumption, st, st);
+    return pthandler_resume_with(r, st, st);
     break;
   case PUT:
-    return pthandler_resume_with(op.resumption, NULL, op.value);
+    return pthandler_resume_with(r, NULL, op.value);
     break;
   default:
     return pthandler_forward(op);
@@ -211,7 +209,6 @@ static void init_stack_repr(stack_repr_t *repr, pthread_mutex_t *mut, pthread_co
   repr->value   = NULL;
   repr->op.tag  = NOOP;
   repr->op.value = NULL;
-  repr->op.resumption = NULL;
   repr->handler = NULL;
   repr->parent  = parent;
 }
@@ -244,7 +241,6 @@ static void finalise_stack(int tag, void *value, int exitcode) {
   // Publish return package.
   sp->parent->op.tag = tag;
   sp->parent->op.value = value;
-  sp->parent->op.resumption = NULL;
 
   // Notify parent stack and release its lock.
   pthread_cond_signal(sp->parent->cond);
@@ -282,14 +278,16 @@ static void* init_stack(void *arg) {
 static void* await(void) {
   // Await an event.
   pthread_cond_wait(sp->cond, sp->mut);
+
   if (sp->op.tag == RETURN) return sp->handler->ret(sp->op.value, sp->handler->param);
-  else {
-    for (int i = 0; i < sp->handler->num_op_clauses; i++) {
-      if (sp->handler->op_clauses[i].tag == sp->op.tag)
-        return sp->handler->op_clauses[i].fn(sp->op, sp->handler->param);
+  pthandler_op_handler_t fn = sp->handler->default_op_handler;
+  for (int i = 0; i < sp->handler->num_op_clauses; i++) {
+    if (sp->handler->op_clauses[i].tag == sp->op.tag) {
+      fn = sp->handler->op_clauses[i].fn;
+      break;
     }
-    return sp->handler->default_op_handler(sp->op, sp->handler->param);
   }
+  return fn(sp->op, (pthandler_resumption_t)sp->value, sp->handler->param);
 }
 
 void* pthandler_handle(pthandler_thunk_t comp, pthandler_t *handler, void *handler_param) {
@@ -379,7 +377,9 @@ void* pthandler_perform(int tag, void *payload) {
   // Publish operation package.
   target->op.tag = tag;
   target->op.value = payload;
-  target->op.resumption = sp;
+
+  // Establish back link.
+  target->value = sp;
 
   // Release target stack lock.
   pthread_mutex_unlock(target->mut);
@@ -469,7 +469,11 @@ void* pthandler_forward(pthandler_op_t op) {
   // Publish operation package.
   sp->parent->op.tag        = op.tag;
   sp->parent->op.value      = op.value;
-  sp->parent->op.resumption = sp;
+
+  // Save current back link.
+  pthandler_resumption_t r = (pthandler_resumption_t)sp->value;
+  // Establish back link.
+  sp->parent->value = sp;
 
   // Release parent stack lock.
   pthread_mutex_unlock(sp->parent->mut);
@@ -480,7 +484,7 @@ void* pthandler_forward(pthandler_op_t op) {
   // Await continuation signal.
   pthread_cond_wait(sp->cond, sp->mut);
 
-  return pthandler_resume(sp->op.resumption, sp->value);
+  return pthandler_resume(r, sp->value);
 }
 
 /* pthandler_exn_t* pthandler_exn_create(int tag, void *payload) { */
