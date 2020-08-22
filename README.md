@@ -1,6 +1,47 @@
 # Pthandlers: affine effect handling via POSIX threads
+
 This C library provides a proof-of-concept encoding of affine effect
-handlers using pthreads.
+handlers using POSIX threads (pthreads).
+
+The encoding strategy utilises the insights of Kumar et al. (1998),
+who implement one-shot delimited continuations using threads, as the
+basis for simulating the implementation of effect handlers in
+Multicore OCaml (Dolan et al. (2015)), which uses a variation of
+segmented stacks á la Bruggeman et al. (1996).
+
+## Building
+
+The `Makefile` provides rules for building static and shared
+variations of this library, simply type
+
+```shell
+$ make lib
+```
+
+This rule assembles the static library `libpthandlers.a` and the
+shared library `libpthandlers.so` and outputs both in the `lib/`
+directory. To build either library variant alone use `make static` or
+`make shared` respectively.
+
+### Examples
+
+This repository contains some example programs. To build them all
+simply type `make all`. Alternatively, they can be built individually
+
+```shell
+$ make examples/{dobedobe,state,divzero}
+```
+
+The resulting binaries are placed in the root of this repository.
+
+## Caveats
+
+This encoding relies heavily on tail-call optimisation (i.e. gcc's
+`-foptimize-sibling-calls`), which seems to be rather fragile, or
+unreliable, in C compilers. In addition this implementation also
+depends on one or more flags from the `-O1` optimisation bundle that I
+have yet to discover. Currently, without passing `-O1` it appears that
+`gcc` (version 7.5.0) fails to tail call optimise some functions.
 
 ## Acknowledgements
 
