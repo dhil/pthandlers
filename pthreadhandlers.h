@@ -1,3 +1,5 @@
+#ifndef PTHANDLER_H
+#define PTHANDLER_H
 typedef struct pthandler_stack_repr_t* pthandler_resumption_t;
 typedef struct pthandler_op_t {
   int tag;
@@ -37,4 +39,4 @@ void* pthandler_abort(pthandler_resumption_t r, int tag, void *payload);
 // Forward an operation.
 /* void* pthandler_forward(pthandler_exn_t op); */
 void* pthandler_reperform(const pthandler_op_t *op);
-
+#endif
