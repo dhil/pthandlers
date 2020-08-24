@@ -11,6 +11,7 @@ typedef enum { NORMAL, ABORT } _stack_status_t;
 
 struct pthandlers_resumption_t {
   pthandlers_t *handler;
+  struct pthandlers_stack_repr_t *top;
   struct pthandlers_stack_repr_t *target;
 };
 
@@ -75,9 +76,10 @@ static void destroy_op(pthandlers_op_t op) {
   free(op);
 }
 
-static pthandlers_resumption_t alloc_resumption(stack_repr_t *target) {
+static pthandlers_resumption_t alloc_resumption(stack_repr_t *target, stack_repr_t *top) {
   pthandlers_resumption_t r = (pthandlers_resumption_t)malloc(sizeof(struct pthandlers_resumption_t));
   r->target = target;
+  r->top = top;
   return r;
 }
 
@@ -264,7 +266,7 @@ void* pthandlers_perform(int tag, void *payload) {
   pthread_mutex_lock(sp->parent->mut);
 
   // Publish operation package.
-  pthandlers_resumption_t r = alloc_resumption(sp);
+  pthandlers_resumption_t r = alloc_resumption(sp, sp);
   pthandlers_op_t op = alloc_op(tag, payload, r);
   sp->parent->op     = op;
 
@@ -296,6 +298,7 @@ void* pthandlers_resume(pthandlers_resumption_t r, void *arg) {
   stack_repr_t *target = r->target;
 
   // Reinstall handler.
+  r->top->parent = sp;
   sp->handler = r->handler;
 
   // Acquire target stack lock.
@@ -353,6 +356,7 @@ void* pthandlers_reperform(pthandlers_op_t op) {
   pthread_mutex_lock(sp->parent->mut);
 
   // Publish operation package.
+  op->resumption->top = sp;
   sp->parent->op = op;
 
   // Release parent stack lock.

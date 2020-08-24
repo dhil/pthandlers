@@ -28,7 +28,7 @@ $(LIB)/pthandlers.o: $(LIB)/pthandlers.h $(LIB)/pthandlers.c
 	$(CC) $(CFLAGS) -fPIC -c $(LIB)/pthandlers.c -o $(LIB)/$(OBJTARGET)
 
 .PHONY: examples
-examples: examples/state examples/dobedobe examples/divzero examples/coop
+examples: examples/state examples/dobedobe examples/divzero examples/coop examples/ovlreader
 
 examples/state: static $(LIB)/pthandlers.h examples/state.c
 	$(CC) $(CFLAGS) examples/state.c -o state $(LFLAGS)
@@ -41,6 +41,9 @@ examples/divzero: static $(LIB)/pthandlers.h examples/divzero.c
 
 examples/coop: static $(LIB)/pthandlers.h examples/coop.c
 	$(CC) $(CFLAGS) examples/coop.c -o coop $(LFLAGS)
+
+examples/ovlreader: static $(LIB)/pthandlers.h examples/ovlreader.c
+	$(CC) $(CFLAGS) examples/ovlreader.c -o ovlreader $(LFLAGS)
 
 
 .PHONY: clean
