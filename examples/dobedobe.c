@@ -17,7 +17,7 @@ void* h0_ret(void *value, void *param) {
   return NULL;
 }
 
-void* h0_op_do(const pthandlers_op_t *op, pthandlers_resumption_t r, void *param) {
+void* h0_op_do(pthandlers_op_t op, pthandlers_resumption_t r, void *param) {
   fprintf(stdout, "be ");
   fflush(stdout);
   return pthandlers_resume(r, NULL);

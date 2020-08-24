@@ -17,7 +17,7 @@ void* eval_state_ret(void *value, void *param) {
   return (void*)value;
 }
 
-void* state_ops(const pthandlers_op_t *op, pthandlers_resumption_t r, void *st) {
+void* state_ops(pthandlers_op_t op, pthandlers_resumption_t r, void *st) {
   switch (op->tag) {
   case GET:
     return pthandlers_resume_with(r, st, st);

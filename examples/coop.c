@@ -134,7 +134,7 @@ void* rr_ret(void *result, queue_t *q) {
   return run_next(q);
 }
 
-void* rr_ops(const pthandlers_op_t *op, pthandlers_resumption_t r, queue_t *q) {
+void* rr_ops(pthandlers_op_t op, pthandlers_resumption_t r, queue_t *q) {
   switch (op->tag) {
   case FORK:
     return pthandlers_handle(((thunk_t)op->value)->fn, &hrr, queue_push(q, (void*)r));

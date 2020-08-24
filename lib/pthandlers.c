@@ -4,13 +4,15 @@
 #include<pthread.h>
 #include "pthandlers.h"
 
-static const int NOOP  = INT_MIN;
 static const int RETURN = -1;
 const int PTHANDLERS_EUNHANDLED = -2;
 
-typedef pthandlers_op_t pthandlers_exn_t;
+typedef enum { NORMAL, ABORTING, RETURNING } _stack_status_t;
 
-typedef enum { NORMAL, ABORT } _stack_status_t;
+struct pthandlers_resumption_t {
+  pthandlers_t *handler;
+  struct pthandlers_stack_repr_t *target;
+};
 
 typedef struct pthandlers_stack_repr_t {
   // Communication.
@@ -20,8 +22,10 @@ typedef struct pthandlers_stack_repr_t {
   void *value;
 
   // Operation package pointer.
-  pthandlers_op_t *op;
-  pthandlers_resumption_t backlink;
+  pthandlers_op_t op;
+
+  // Exception package pointer.
+  pthandlers_exn_t exn;
 
   // Handler pointer.
   pthandlers_t *handler;
@@ -40,11 +44,11 @@ static void* generic_handler_return(void *value, void *param) {
   return value;
 }
 
-static void* generic_handler_op(const pthandlers_op_t *op, pthandlers_resumption_t r, void *param) {
+static void* generic_handler_op(pthandlers_op_t op, pthandlers_resumption_t r, void *param) {
   return pthandlers_reperform(op);
 }
 
-static void* generic_handler_exn(const pthandlers_op_t *exn, void *param) {
+static void* generic_handler_exn(pthandlers_exn_t exn, void *param) {
   pthandlers_rethrow(exn);
   return NULL; // unreachable.
 }
@@ -62,15 +66,38 @@ void pthandlers_init( pthandlers_t *handler
 // Thread-local "stack" pointer.
 static _Thread_local stack_repr_t *sp = NULL;
 
+static pthandlers_op_t alloc_op(int tag, void *payload, pthandlers_resumption_t r) {
+  pthandlers_op_t op = (pthandlers_op_t)malloc(sizeof(struct pthandlers_op_t));
+  op->tag = tag;
+  op->value = payload;
+  op->resumption = r;
+  return op;
+}
+
+static void destroy_op(pthandlers_op_t op) {
+  free(op);
+}
+
+static pthandlers_resumption_t alloc_resumption(stack_repr_t *target) {
+  pthandlers_resumption_t r = (pthandlers_resumption_t)malloc(sizeof(struct pthandlers_resumption_t));
+  r->target = target;
+  return r;
+}
+
+static void destroy_resumption(pthandlers_resumption_t r) {
+  free(r);
+}
+
 static void init_stack_repr(  stack_repr_t *repr
                             , pthread_mutex_t *mut, pthread_cond_t *cond
-                            , pthandlers_op_t *op
+                            , pthandlers_exn_t exn
                             , stack_repr_t *parent) {
   repr->status  = NORMAL;
   repr->mut     = mut;
   repr->cond    = cond;
   repr->value   = NULL;
-  repr->op      = op;
+  repr->op      = NULL;
+  repr->exn     = exn;
   repr->handler = NULL;
   repr->parent  = parent;
 }
@@ -81,41 +108,43 @@ static stack_repr_t* alloc_stack_repr(void) {
   pthread_mutex_init(mut, NULL); // TODO check return value.
   pthread_cond_t *cond = (pthread_cond_t*)malloc(sizeof(pthread_cond_t));
   pthread_cond_init(cond, NULL); // TODO check return value.
-  pthandlers_op_t *op = (pthandlers_op_t*)malloc(sizeof(pthandlers_op_t));
-  init_stack_repr(stack_repr, mut, cond, op, NULL);
+  pthandlers_exn_t exn = alloc_op(0, NULL, NULL);
+  init_stack_repr(stack_repr, mut, cond, exn, NULL);
   return stack_repr;
 }
 
 static void destroy_stack_repr(stack_repr_t *stack_repr) {
   pthread_mutex_destroy(stack_repr->mut);
   pthread_cond_destroy(stack_repr->cond);
-  /* destroy_op(stack_repr->op); */
   free(stack_repr->mut);
   free(stack_repr->cond);
-  free(stack_repr->op);
+  free(stack_repr->exn);
   free(stack_repr);
   stack_repr = NULL;
 }
 
-static void finalise_stack(int tag, void *value, int exitcode) {
+static void finalise_stack(_stack_status_t stack_status, int tag, void *value, int exitcode) {
   // Initiate return protocol.
   // Acquire parent stack lock.
   pthread_mutex_lock(sp->parent->mut);
 
+  // Propogate stack status.
+  sp->parent->status = stack_status;
+
   // Publish return package.
-  sp->parent->op->tag = tag;
-  sp->parent->op->value = value;
-  sp->parent->backlink = NULL;
+  sp->parent->exn->tag   = tag;
+  sp->parent->exn->value = value;
 
   // Notify parent stack and release its lock.
   pthread_cond_signal(sp->parent->cond);
   pthread_mutex_unlock(sp->parent->mut);
 
   // Destroy stack representation.
+  destroy_op(sp->exn);
   sp = NULL;
 
   // Prepare stack completion signal.
-  int *status = (int*)malloc(sizeof(int));
+  int *status = (int*)malloc(sizeof(int)); // TODO FIXME.
   *status = exitcode;
 
   pthread_exit((void*)status);
@@ -127,9 +156,9 @@ static void* init_stack(void *arg) {
   // Create and initialise stack structure representation.
   pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-  pthandlers_op_t op = { NOOP, NULL };
+  pthandlers_exn_t exn = alloc_op(RETURN, NULL, NULL);
   stack_repr_t stack_repr;
-  init_stack_repr(&stack_repr, &mut, &cond, &op, data->parent_repr);
+  init_stack_repr(&stack_repr, &mut, &cond, exn, data->parent_repr);
   sp = &stack_repr;
 
   // The following seemingly odd sequence serve to sequentialise the
@@ -141,7 +170,7 @@ static void* init_stack(void *arg) {
   void *result = data->comp();
 
   // Finalise stack.
-  finalise_stack(RETURN, result, 0);
+  finalise_stack(RETURNING, RETURN, result, 0);
 
   return NULL;
 }
@@ -150,9 +179,24 @@ static void* await(void) {
   // Await an event.
   pthread_cond_wait(sp->cond, sp->mut);
 
-  if (sp->op->tag == RETURN) return sp->handler->ret(sp->op->value, sp->handler->param);
-  else if (sp->backlink == NULL) return sp->handler->exn(sp->op, sp->handler->param);
-  else return sp->handler->op(sp->op, sp->backlink, sp->handler->param);
+  // Uninstall the current handler.
+  pthandlers_t *handler = sp->handler;
+  sp->handler = NULL;
+
+  // Consume operation package.
+  pthandlers_op_t op = sp->op;
+  sp->op = NULL;
+
+  if (sp->status == RETURNING) {
+    sp->status = NORMAL;
+    return handler->ret(sp->exn->value, handler->param);
+  } else if (sp->status == ABORTING) {
+    sp->status = NORMAL;
+    return handler->exn(sp->exn, handler->param);
+  } else {
+    op->resumption->handler = handler;
+    return handler->op(op, op->resumption, handler->param);
+  }
 }
 
 void* pthandlers_handle(pthandlers_thunk_t comp, pthandlers_t *handler, void *handler_param) {
@@ -199,9 +243,6 @@ void* pthandlers_handle(pthandlers_thunk_t comp, pthandlers_t *handler, void *ha
   pthread_attr_destroy(&attr);
   free(status); // TODO FIXME inspect status.
 
-  // Uninstall current handler.
-  sp->handler = NULL;
-
   // Release current stack lock.
   pthread_mutex_unlock(sp->mut);
 
@@ -224,9 +265,10 @@ void* pthandlers_perform(int tag, void *payload) {
   pthread_mutex_lock(sp->parent->mut);
 
   // Publish operation package.
-  sp->parent->op->tag = tag;
-  sp->parent->op->value = payload;
-  sp->parent->backlink = sp;
+  pthandlers_resumption_t r = alloc_resumption(sp);
+  pthandlers_op_t op = alloc_op(tag, payload, r);
+  sp->parent->op     = op;
+
 
   // Release target stack lock.
   pthread_mutex_unlock(sp->parent->mut);
@@ -237,8 +279,12 @@ void* pthandlers_perform(int tag, void *payload) {
   // Await continuation signal.
   pthread_cond_wait(sp->cond, sp->mut);
 
+  // Reclaim operation and resumption packages.
+  destroy_op(op);
+  destroy_resumption(r);
+
   // Check for abortive status.
-  if (sp->status == ABORT) pthandlers_throw(sp->op->tag, sp->op->value);
+  if (sp->status == ABORTING) pthandlers_rethrow(sp->exn);
 
   void *result = sp->value; // TODO FIXME: copy pointer.
 
@@ -248,8 +294,10 @@ void* pthandlers_perform(int tag, void *payload) {
 }
 
 void* pthandlers_resume(pthandlers_resumption_t r, void *arg) {
-  stack_repr_t *target = r;
-  sp->backlink = NULL; // `r` is an alias of `sp->backlink`.
+  stack_repr_t *target = r->target;
+
+  // Reinstall handler.
+  sp->handler = r->handler;
 
   // Acquire target stack lock.
   pthread_mutex_lock(target->mut);
@@ -268,38 +316,24 @@ void* pthandlers_resume(pthandlers_resumption_t r, void *arg) {
 }
 
 void* pthandlers_resume_with(pthandlers_resumption_t r, void *arg, void *handler_param) {
-  stack_repr_t *target = r;
-  sp->backlink = NULL; // `r` is an alias of `sp->backlink`.
-
-  // Acquire target stack lock.
-  pthread_mutex_lock(target->mut);
-
-  // Publish the argument.
-  target->value = arg;
-
-  // Update own handler parameter.
-  sp->handler->param = handler_param;
-
-  // Signal readiness.
-  pthread_cond_signal(target->cond);
-
-  // Release target stack lock.
-  pthread_mutex_unlock(target->mut);
-
-  // Await next event.
-  return await();
+  // Update handler parameter.
+  r->handler->param = handler_param;
+  return pthandlers_resume(r, arg);
 }
 
 void* pthandlers_abort(pthandlers_resumption_t r, int tag, void *payload) {
-  stack_repr_t *target = r;
+  stack_repr_t *target = r->target;
+
+  // Reinstall handler.
+  sp->handler = r->handler;
 
   // Acquire target stack lock.
   pthread_mutex_lock(target->mut);
 
   // Publish exception.
-  target->status = ABORT;
-  target->op->tag = tag;
-  target->op->value = payload;
+  target->status     = ABORTING;
+  target->exn->tag   = tag;
+  target->exn->value = payload;
 
   // Signal target stack.
   pthread_cond_signal(target->cond);
@@ -311,16 +345,17 @@ void* pthandlers_abort(pthandlers_resumption_t r, int tag, void *payload) {
   return await();
 }
 
-void* pthandlers_reperform(const pthandlers_op_t *op) {
+void* pthandlers_reperform(pthandlers_op_t op) {
+  // Reinstall handler.
+  sp->handler = op->resumption->handler;
+  op->resumption->handler = NULL;
+
   // Acquire parent stack lock.  Lock for current stack should already
   // be acquired prior to invoking forward.
   pthread_mutex_lock(sp->parent->mut);
 
   // Publish operation package.
-  sp->parent->op->tag        = op->tag;
-  sp->parent->op->value      = op->value;
-  sp->parent->backlink       = sp->backlink;
-  sp->backlink = NULL;
+  sp->parent->op = op;
 
   // Release parent stack lock.
   pthread_mutex_unlock(sp->parent->mut);
@@ -332,9 +367,9 @@ void* pthandlers_reperform(const pthandlers_op_t *op) {
 }
 
 void pthandlers_throw(int tag, void *payload) {
-  finalise_stack(tag, payload, 0);
+  finalise_stack(ABORTING, tag, payload, 0);
 }
 
-void pthandlers_rethrow(const pthandlers_exn_t *exn) {
+void pthandlers_rethrow(pthandlers_exn_t exn) {
   pthandlers_throw(exn->tag, exn->value);
 }

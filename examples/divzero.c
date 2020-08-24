@@ -14,7 +14,7 @@ int read_int(void) {
   return i;
 }
 
-void* hread_static_int_op(const pthandlers_op_t *op, pthandlers_resumption_t r, int *ptr) {
+void* hread_static_int_op(pthandlers_op_t op, pthandlers_resumption_t r, int *ptr) {
   static int inputs[] = {8, 0, 8, 0};
   int *integer = NULL;
   switch (op->tag) {
@@ -29,7 +29,7 @@ void* hread_static_int_op(const pthandlers_op_t *op, pthandlers_resumption_t r, 
   }
 }
 
-void* hread_int_op(const pthandlers_op_t *op, pthandlers_resumption_t r, void *param) {
+void* hread_int_op(pthandlers_op_t op, pthandlers_resumption_t r, void *param) {
   int *integer = NULL;
   switch (op->tag) {
   case READ_INT:
@@ -43,7 +43,7 @@ void* hread_int_op(const pthandlers_op_t *op, pthandlers_resumption_t r, void *p
   }
 }
 
-void* hread_bad_input_exn(const pthandlers_exn_t *op, void *param) {
+void* hread_bad_input_exn(pthandlers_exn_t op, void *param) {
   switch (op->tag) {
   case BAD_INPUT:
     fprintf(stderr, "error: bad input\n");
@@ -54,7 +54,7 @@ void* hread_bad_input_exn(const pthandlers_exn_t *op, void *param) {
   return NULL;
 }
 
-void* hdiv_zero_op(const pthandlers_op_t *op, pthandlers_resumption_t r, void *param) {
+void* hdiv_zero_op(pthandlers_op_t op, pthandlers_resumption_t r, void *param) {
   switch (op->tag) {
   case DIV_ZERO:
     if (_abort) {
@@ -70,7 +70,7 @@ void* hdiv_zero_op(const pthandlers_op_t *op, pthandlers_resumption_t r, void *p
   }
 }
 
-void* hdiv_zero_exn(const pthandlers_exn_t *exn, void *param) {
+void* hdiv_zero_exn(pthandlers_exn_t exn, void *param) {
   switch (exn->tag) {
   case DIV_ZERO:
     fprintf(stderr, "Division by zero!\n");
@@ -99,7 +99,7 @@ void* handle_div(void) {
   pthandlers_t hdiv;
   pthandlers_init(&hdiv, NULL, hdiv_zero_op, hdiv_zero_exn);
 
-  printf("Running under a non-aboertive handler.\n");
+  printf("Running under a non-abortive handler.\n");
   long result = (long)pthandlers_handle(interactive_div, &hdiv, NULL);
   printf("Return value: %ld\n", result);
 

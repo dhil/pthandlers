@@ -1,17 +1,19 @@
 #ifndef PTHANDLERS_H
 #define PTHANDLERS_H
-typedef struct pthandlers_stack_repr_t* pthandlers_resumption_t;
-typedef struct pthandlers_op_t {
+typedef struct pthandlers_resumption_t* pthandlers_resumption_t;
+struct pthandlers_op_t {
   int tag;
   void *value;
-} pthandlers_op_t;
+  pthandlers_resumption_t resumption;
+};
+typedef struct pthandlers_op_t* pthandlers_op_t;
 typedef pthandlers_op_t pthandlers_exn_t;
 
 extern const int PTHANDLERS_EUNHANDLED;
 
 typedef void *(*pthandlers_thunk_t)(void);
-typedef void *(*pthandlers_op_handler_t)(const pthandlers_op_t*, pthandlers_resumption_t, void*);
-typedef void *(*pthandlers_exn_handler_t)(const pthandlers_op_t*, void*);
+typedef void *(*pthandlers_op_handler_t)(const pthandlers_op_t, pthandlers_resumption_t, void*);
+typedef void *(*pthandlers_exn_handler_t)(const pthandlers_exn_t, void*);
 typedef void *(*pthandlers_ret_handler_t)(void*, void*);
 
 typedef struct pthandlers_t {
@@ -40,6 +42,6 @@ void* pthandlers_resume_with(pthandlers_resumption_t r, void *arg, void *handler
 // Abort a resumption.
 void* pthandlers_abort(pthandlers_resumption_t r, int tag, void *payload);
 // Forward an operation.
-void* pthandlers_reperform(const pthandlers_op_t *op);
-void  pthandlers_rethrow(const pthandlers_exn_t *exn);
+void* pthandlers_reperform(const pthandlers_op_t op);
+void  pthandlers_rethrow(pthandlers_exn_t exn);
 #endif
