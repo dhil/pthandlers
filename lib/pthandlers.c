@@ -298,7 +298,7 @@ void* pthandlers_resume(pthandlers_resumption_t r, void *arg) {
   stack_repr_t *target = r->target;
 
   // Reinstall handler.
-  r->top->parent = sp;
+  r->top->parent = sp; // TODO FIXME: explain.
   sp->handler = r->handler;
 
   // Acquire target stack lock.
@@ -327,6 +327,7 @@ void* pthandlers_abort(pthandlers_resumption_t r, int tag, void *payload) {
   stack_repr_t *target = r->target;
 
   // Reinstall handler.
+  r->top->parent = sp; // TODO FIXME: explain.
   sp->handler = r->handler;
 
   // Acquire target stack lock.
