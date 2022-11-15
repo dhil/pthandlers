@@ -1,71 +1,67 @@
+/*
+ * Countdown: repeatedly decrements some ambient state until the
+ * stateful value is zero.
+ **/
+
 #include<stdio.h>
 #include<stdlib.h>
-#include "../lib/pthandlers.h"
+#include "../lib/ptfx.h"
 
-enum { GET = 100, PUT } STATE_OP_T;
+PTFX_DECLARE_EFFECT(state, get, put) {
+  PTFX_OP_VOID_PAYLOAD(get, const int*),
+  PTFX_OP_VOID_RESULT(put, const int*)
+};
 
-void* countdown(void) {
-  long st = (long)pthandlers_perform(GET, NULL);
-  if (st == 0) return (void*)0;
-  else {
-    pthandlers_perform(PUT, (void *)(st - 1));
-    return countdown();
+int countdown(void) {
+  int n;
+  while ((n = *((const int*)ptfx_perform0(state, get))) > 0) {
+    n = n - 1;
+    ptfx_perform(state, put, &n);
   }
+
+  return n;
 }
 
-void* eval_state_ret(void *value, void *param) {
-  return (void*)value;
+void* runner(void *arg) {
+  printf("Countdown from n = %d\n", *((const int*)ptfx_perform0(state, get)));
+  printf("Result = %d\n", countdown());
+  return NULL;
 }
 
-void* state_ops(pthandlers_op_t op, pthandlers_resumption_t r, void *st) {
-  switch (op->tag) {
-  case GET:
-    return pthandlers_resume_with(r, st, st);
-  case PUT:
-    return pthandlers_resume_with(r, NULL, op->value);
-  default:
-    return pthandlers_reperform(op);
-  }
+// (Eval)State handler definition.
+// Get () r -> r s s
+void* hstate_get(ptfx_op_t *op, ptfx_cont_t r, void *param) {
+  int *state = (int*)param;
+  ptfx_free_op(op);
+  return ptfx_resume_deep(r, state, state);
 }
 
-typedef struct pair_t {
-  void *fst;
-  void *snd;
-} pair_t;
-
-pair_t* alloc_pair(void) {
-  return (pair_t*)malloc(sizeof(pair_t));
+// Put s' r -> r () s'
+void* hstate_put(ptfx_op_t *op, ptfx_cont_t r, void *param) {
+  int *state = (int*)param;
+  *state = *((int*)op->payload);
+  ptfx_free_op(op);
+  return ptfx_resume_deep(r, NULL, state);
 }
 
-int destroy_pair(pair_t *pair) {
-  free(pair);
-  return 0;
+// Return x -> x
+void* hstate_return(void *result, void *param) {
+  return result;
 }
 
-pair_t *make_pair(void *fst, void *snd) {
-  pair_t *pair = alloc_pair();
-  pair->fst = fst;
-  pair->snd = snd;
-  return pair;
-}
-
-void *run_state_ret(void *value, void *param) {
-  pair_t *pair = make_pair((void*)value, param);
-  return pair;
+ptfx_hop hstate_selector(const struct ptfx_op_spec *spec) {
+  if (spec == &ptfx_effect_state.get) return hstate_get;
+  else if (spec == &ptfx_effect_state.put) return hstate_put;
+  else return NULL;
 }
 
 int main(void) {
-  long n = 100000;
-  printf("Countdown from %ld\n", n);
-  pthandlers_t eval_state;
-  pthandlers_init(&eval_state, eval_state_ret, state_ops, NULL);
-  long result = (long)pthandlers_handle(countdown, &eval_state, (void*)n);
-  printf("Countdown result with eval_state: %ld\n", result);
+  ptfx_handler_t hstate = { .ret = hstate_return
+                          , .eff = hstate_selector };
+  int state = 1000000;
 
-  pthandlers_t run_state;
-  pthandlers_init(&run_state, run_state_ret, state_ops, NULL);
-  pair_t *p = (pair_t*)pthandlers_handle(countdown, &run_state, (void*)n);
-  printf("Countdown result with run_state: (%ld, %ld)\n", (long)(p->fst), (long)(p->snd));
-  destroy_pair(p);
+  ptfx_cont_t cont = ptfx_new_cont(runner);
+  ptfx_resume(cont, NULL, &hstate, &state);
+
   return 0;
 }

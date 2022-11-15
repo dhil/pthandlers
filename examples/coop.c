@@ -1,12 +1,13 @@
 #include<stdio.h>
 #include<stdlib.h>
-#include "../lib/pthandlers.h"
+#include "../lib/ptfx.h"
 
 /* An implementation of cons lists. */
 typedef struct list_t {
   void *value;
   struct list_t *next;
 } list_t;
+
 list_t* NIL = NULL;
 
 list_t* list_cons(void *value, list_t *tail) {
@@ -74,12 +75,12 @@ void* queue_destroy(queue_t *q, void *(*felem)(void*)) {
   return NULL;
 }
 
-queue_t* queue_push(queue_t *q, void *elem) {
-  q->rear = list_cons(elem, q->rear);
+queue_t* queue_push(queue_t *q, ptfx_cont_t *k) {
+  q->rear = list_cons((void*)k, q->rear);
   return q;
 }
 
-void* queue_pop(queue_t *q) {
+ptfx_cont_t* queue_pop(queue_t *q) {
   if (q->front == NIL) {
     q->front = list_ireverse(q->rear);
     q->rear  = NIL;
@@ -91,7 +92,7 @@ void* queue_pop(queue_t *q) {
   q->front = q->front->next;
   cell->next = NIL;
   list_destroy(cell, NULL);
-  return elem;
+  return (ptfx_cont_t*)elem;
 }
 
 int queue_isempty(const queue_t *q) {
@@ -99,60 +100,74 @@ int queue_isempty(const queue_t *q) {
 }
 
 /* Roundrobin scheduler. */
-pthandlers_t hrr;
+static ptfx_handler_t hrr;
 
 void* run_next(queue_t *q) {
   if (queue_isempty(q)) return NULL;
-  else return pthandlers_resume_with(queue_pop(q), NULL, q);
+  else {
+    ptfx_cont_t *cont = queue_pop(q);
+    ptfx_cont_t k = *cont;
+    free(cont);
+    return ptfx_resume(k, NULL, &hrr, q);
+  }
 }
 
 struct thunk_t {
-  pthandlers_thunk_t fn;
+  void *(*fn)(void *);
 };
 
 typedef struct thunk_t* thunk_t;
 
-thunk_t alloc_thunk(pthandlers_thunk_t fn) {
-  thunk_t t = (thunk_t)malloc(sizeof(struct thunk_t));
-  t->fn = fn;
-  return t;
-}
+PTFX_DECLARE_EFFECT(co, fork, yield) {
+  PTFX_OP_VOID_RESULT(fork, const thunk_t),
+  PTFX_OP_VOID(yield)
+};
 
-enum { FORK = 300, YIELD };
 
-void gfork(void *(*f)(void)) {
-  thunk_t g = alloc_thunk(f);
-  pthandlers_perform(FORK, g);
-  free(g);
+void gfork(void *(*f)(void*)) {
+  struct thunk_t g = { f };
+  ptfx_perform(co, fork, &g);
 }
 
 void gyield(void) {
-  pthandlers_perform(YIELD, NULL);
+  ptfx_perform0(co, yield);
 }
 
-void* rr_ret(void *result, queue_t *q) {
+static ptfx_cont_t* heapify(ptfx_cont_t r) {
+  ptfx_cont_t *cont = (ptfx_cont_t*)malloc(sizeof(ptfx_cont_t));
+  *cont = r;
+  return cont;
+}
+
+// Handler definition
+void* hrr_return(void *result, queue_t *q) {
   return run_next(q);
 }
 
-void* rr_ops(pthandlers_op_t op, pthandlers_resumption_t r, queue_t *q) {
-  switch (op->tag) {
-  case FORK:
-    return pthandlers_handle(((thunk_t)op->value)->fn, &hrr, queue_push(q, (void*)r));
-  case YIELD:
-    return run_next(queue_push(q, r));
-  default:
-    return pthandlers_reperform(op);
-  }
+void* hrr_fork(ptfx_op_t *op, ptfx_cont_t r, queue_t *q) {
+  ptfx_cont_t cont = ptfx_new_cont(((thunk_t)op->payload)->fn);
+  q = queue_push(q, heapify(r));
+  return ptfx_resume(cont, NULL, &hrr, (void *)q);
 }
 
-void* a2(void) {
+void* hrr_yield(ptfx_op_t *op, ptfx_cont_t r, queue_t *q) {
+  return run_next(queue_push(q, heapify(r)));
+}
+
+ptfx_hop hrr_selector(const struct ptfx_op_spec *spec) {
+  if (spec == &ptfx_effect_co.fork) return (ptfx_hop)hrr_fork;
+  else if (spec == &ptfx_effect_co.yield) return (ptfx_hop)hrr_yield;
+  else return NULL;
+}
+
+void* a2(void *arg) {
   printf("A2 ");
   gyield();
   printf("A2 ");
   return NULL;
 }
 
-void* a1(void) {
+void* a1(void *arg) {
   printf("A1 ");
   gfork(a2);
   gyield();
@@ -160,14 +175,14 @@ void* a1(void) {
   return NULL;
 }
 
-void* b1(void) {
+void* b1(void *arg) {
   printf("B1 ");
   gyield();
   printf("B1 ");
   return NULL;
 }
 
-void* coop_comp(void) {
+void* runner(void *arg) {
   printf("main ");
   gfork(a1);
   gfork(b1);
@@ -176,9 +191,12 @@ void* coop_comp(void) {
 }
 
 int main(void) {
-  pthandlers_init(&hrr, (pthandlers_ret_handler_t)rr_ret, (pthandlers_op_handler_t)rr_ops, NULL);
+  ptfx_handler_t h = { .ret = (ptfx_hret)hrr_return
+                     , .eff = hrr_selector };
+  hrr = h;
+  ptfx_cont_t cont = ptfx_new_cont(runner);
   queue_t *q = queue_create();
-  pthandlers_handle(coop_comp, &hrr, q);
+  ptfx_resume(cont, NULL, &hrr, (void*)q);
   printf("\n");
   queue_destroy(q, NULL);
   return 0;
