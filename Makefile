@@ -45,6 +45,9 @@ examples/coop: static $(LIB)/pthandlers.h examples/coop.c
 examples/ovlreader: static $(LIB)/pthandlers.h examples/ovlreader.c
 	$(CC) $(CFLAGS) examples/ovlreader.c -o ovlreader $(LFLAGS)
 
+examples/generator: static $(LIB)/pthandlers.h examples/generator.c
+	$(CC) $(CFLAGS) examples/generator.c -o generator $(LFLAGS)
+
 
 .PHONY: clean
 clean:
